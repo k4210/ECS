@@ -7,6 +7,7 @@
 #include<map>
 #include<vector>
 #include<tuple>
+#include<array>
 
 static const constexpr int kMaxComponentTypeNum = 256;
 static const constexpr int kMaxEntityNum = 1024;
@@ -88,6 +89,11 @@ public:
 		return std::lower_bound(components.begin(), components.end(), TPair{ id, TComponent{} }, &Less);
 	}
 
+	auto DesiredPosition(int id, int previous_pos)
+	{
+		return std::lower_bound(components.begin() + previous_pos, components.end(), TPair{ id, TComponent{} }, &Less);
+	}
+
 	TComponent& Add(EntityId id)
 	{
 		auto it = DesiredPosition(id.index);
@@ -104,9 +110,11 @@ public:
 		components.erase(it);
 	}
 
-	TComponent* Get(EntityId id)
+	TComponent* Get(EntityId id, int& iter)
 	{
-		auto it = DesiredPosition(id.index);
+		auto it = DesiredPosition(id.index, iter);
+		iter = std::distance(components.begin(), it) + 1;
+		assert(it->first == id.index);
 		return (it->first == id.index) ? &it->second : nullptr;
 	}
 
@@ -301,24 +309,42 @@ private:
 	};
 
 public:
-	template<typename... Args>
-	static ComponentCache BuildCacheFilter() { return FilterBuilder<Args...>::Build(); }
+	template<typename... Args> static ComponentCache BuildCacheFilter() { return FilterBuilder<Args...>::Build(); }
 
 private:
+	template<typename T> static constexpr bool NeedsCacheIter()
+	{
+		return std::is_same<T::Container, SortedComponentContainer<std::remove_const<T>::type>>::value;
+	}
+
+	template<typename... TComps> static constexpr int NumCachedIter()
+	{
+		return ((NeedsCacheIter<TComps>() ? 1 : 0) + ...);
+	}
 
 	template<typename T, typename... Args> struct TupleBuilder
 	{
-		inline static auto Build(EntityId id)
+		template<typename TArr, int IterIdx = NumCachedIter<Args...>()>
+		inline static auto Build(EntityId id, TArr& cached_iters)
 		{
-			return std::tuple_cat(TupleBuilder<T>::Build(id), TupleBuilder<Args...>::Build(id));
+			return std::tuple_cat(TupleBuilder<T>::Build<TArr, IterIdx>(id, cached_iters)
+				, TupleBuilder<Args...>::Build<TArr>(id, cached_iters));
 		}
 	};
 
 	template<typename T> struct TupleBuilder<T>
 	{
-		inline static auto Build(EntityId id)
+		template<typename TArr, int IterIdx = 0>
+		inline static auto Build(EntityId id, TArr& cached_iters)
 		{
-			return std::make_tuple<T*>(T::GetContainer().Get(id));
+			if constexpr(NeedsCacheIter<T>())
+			{
+				return std::make_tuple<T*>(T::GetContainer().Get(id, cached_iters[IterIdx]));
+			}
+			else
+			{
+				return std::make_tuple<T*>(T::GetContainer().Get(id));
+			}
 		}
 	};
 
@@ -327,23 +353,29 @@ public:
 	template<typename TFunc, typename... TComps>
 	void Call(TFunc& Func)
 	{
+		std::array<int, NumCachedIter<TComps...>()> cached_iters;
+		cached_iters.fill(0);
+
 		const ComponentCache filter = BuildCacheFilter<TComps...>();
 		for (EntityId id = entities.GetNext({}, filter); id.IsValid(); id = entities.GetNext(id, filter))
 		{
-			std::apply(Func, TupleBuilder<TComps...>::Build(id));
+			std::apply(Func, TupleBuilder<TComps...>::Build(id, cached_iters));
 		}
 	}
 
 	template<typename THint, typename TFunc, typename... TComps>
 	void CallHint(TFunc& Func)
 	{
+		std::array<int, NumCachedIter<TComps...>()> cached_iters;
+		cached_iters.fill(0);
+
 		const ComponentCache filter = BuildCacheFilter<THint, TComps...>();
 		for (auto& it : THint::GetContainer().GetCollection())
 		{
 			const EntityId id(it.first);
 			if (entities.GetChecked(id).PassFilter(filter))
 			{
-				std::apply(Func, std::tuple_cat(std::make_tuple(&it.second), TupleBuilder<TComps...>::Build(id)));
+				std::apply(Func, std::tuple_cat(std::make_tuple(&it.second), TupleBuilder<TComps...>::Build(id, cached_iters)));
 			}
 		}
 	}
@@ -357,10 +389,9 @@ public:
 		}
 	}
 
-	// Iterators ?
-	// Const, Exlusivity, Batches, threads
-
 	//TESTS
 	//PROFILER
+
+	// Const, Exlusivity, Batches, threads
 };
 

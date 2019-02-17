@@ -3,7 +3,7 @@
 
 struct PositionComponent : public ComponentBase<0>
 {
-	using Container = DenseComponentContainer<PositionComponent>;
+	using Container = SortedComponentContainer<PositionComponent>;
 	static Container& GetContainer();
 
 	float x = 0;
@@ -15,7 +15,7 @@ template<> void ComponentBase<0>::Remove(EntityId id) { PositionComponent_Contai
 
 struct MovementComponent : public ComponentBase<1>
 {
-	using Container = DenseComponentContainer<MovementComponent>;
+	using Container = SortedComponentContainer<MovementComponent>;
 	static Container& GetContainer();
 
 	float x = 0;
@@ -74,16 +74,22 @@ MovementSystem ms;
 
 int main()
 {
-	const auto actor1 = ecs.AddEntity();
+	auto init_actor = [](auto actor)
 	{
-		ecs.AddComponent<PositionComponent>(actor1);
-		auto& mov_comp = ecs.AddComponent<MovementComponent>(actor1);
+		ecs.AddComponent<PositionComponent>(actor);
+		auto& mov_comp = ecs.AddComponent<MovementComponent>(actor);
 		mov_comp.x = 2;
 		mov_comp.y = -1;
-		auto& acc_comp = ecs.AddComponent<AccelerationComponent>(actor1);
+		auto& acc_comp = ecs.AddComponent<AccelerationComponent>(actor);
 		acc_comp.x = 1;
 		acc_comp.y = 0;
-	}
+	};
+	const auto actor1 = ecs.AddEntity();
+	init_actor(actor1);
+
+	const auto actor2 = ecs.AddEntity();
+	init_actor(actor2);
+
 	ms.UpdatePos(ecs);
 	ms.AccelerateMove(ecs);
 	ms.UpdateAcceleration(ecs);
