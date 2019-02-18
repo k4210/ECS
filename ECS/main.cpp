@@ -1,41 +1,28 @@
 
 #include "ECS.h"
 
-struct PositionComponent : public ComponentBase<0>
-{
-	using Container = SortedComponentContainer<PositionComponent>;
-	static Container& GetContainer();
+using namespace ECS;
 
+struct PositionComponent : public Component<0, DenseComponentContainer<PositionComponent>>
+{
 	float x = 0;
 	float y = 0;
 };
-PositionComponent::Container PositionComponent_Container;
-PositionComponent::Container& PositionComponent::GetContainer() { return PositionComponent_Container; }
-template<> void ComponentBase<0>::Remove(EntityId id) { PositionComponent_Container.Remove(id); }
+IMPLEMENT_COMPONENT(PositionComponent);
 
-struct MovementComponent : public ComponentBase<1>
+struct MovementComponent : public Component<1, SortedComponentContainer<MovementComponent>>
 {
-	using Container = SortedComponentContainer<MovementComponent>;
-	static Container& GetContainer();
-
 	float x = 0;
 	float y = 0;
 };
-MovementComponent::Container MovementComponent_Container;
-MovementComponent::Container& MovementComponent::GetContainer() { return MovementComponent_Container; }
-template<> void ComponentBase<1>::Remove(EntityId id) { MovementComponent_Container.Remove(id); }
+IMPLEMENT_COMPONENT(MovementComponent);
 
-struct AccelerationComponent : public ComponentBase<2>
+struct AccelerationComponent : public Component<2, SparseComponentContainer<AccelerationComponent>>
 {
-	using Container = SortedComponentContainer<AccelerationComponent>;
-	static Container& GetContainer();
-
 	float x = 0;
 	float y = 0;
 };
-AccelerationComponent::Container AccelerationComponent_Container;
-AccelerationComponent::Container& AccelerationComponent::GetContainer() { return AccelerationComponent_Container; }
-template<> void ComponentBase<2>::Remove(EntityId id) { AccelerationComponent_Container.Remove(id); }
+IMPLEMENT_COMPONENT(AccelerationComponent);
 
 struct MovementSystem
 {
