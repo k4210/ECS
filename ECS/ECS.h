@@ -215,9 +215,9 @@ namespace ECS
 		private:
 			Entity entities_space[kMaxEntityNum];
 			std::bitset<kMaxEntityNum> used_entities;
-
+			int cached_number = 0;
 		public:
-			Entity * Get(EntityId Id)
+			const Entity* Get(EntityId Id) const
 			{
 				return (Id.IsValid() && used_entities.test(Id.index)) ? &entities_space[Id.index] : nullptr;
 			}
@@ -244,6 +244,7 @@ namespace ECS
 				{
 					used_entities[first_zero_idx] = 1;
 					assert(entities_space[first_zero_idx].IsEmpty());
+					cached_number++;
 					return EntityId(first_zero_idx);
 				}
 				return EntityId();
@@ -255,15 +256,19 @@ namespace ECS
 				assert(bProperId);
 				if (bProperId)
 				{
+					cached_number--;
 					entities_space[id.index].Reset();
 					used_entities.set(id.index, false);
 				}
 			}
 
-			EntityId GetNext(EntityId id, const ComponentCache& pattern) const
+			int GetNumEntities() const { return cached_number; }
+
+			EntityId GetNext(EntityId id, const ComponentCache& pattern, int& already_tested) const
 			{
-				for (int it = id.index + 1; it < kMaxEntityNum; it++)
+				for (int it = id.index + 1; (it < kMaxEntityNum) && (already_tested < cached_number); it++)
 				{
+					already_tested++;
 					if (used_entities.test(it) && entities_space[it].PassFilter(pattern))
 					{
 						return EntityId(it);
@@ -336,12 +341,11 @@ namespace ECS
 			}
 		};
 
-	public:
-
-		template<typename... Args> static ComponentCache BuildCacheFilter() 
-		{ 
-			return FilterBuilder<Args...>::Build(); 
+		template<typename... Args> static ComponentCache BuildCacheFilter()
+		{
+			return FilterBuilder<Args...>::Build();
 		}
+	public:
 
 		EntityId AddEntity() 
 		{ 
@@ -352,7 +356,20 @@ namespace ECS
 			RecursiveRemoveComponent<kActuallyImplementedComponents - 1>(id, entities.GetChecked(id));
 			entities.Remove(id);
 		}
+		int GetNumEntities() const 
+		{ 
+			return entities.GetNumEntities(); 
+		}
+		bool IsValidEntity(EntityId id) const
+		{
+			return nullptr != entities.Get(id);
+		}
 
+		template<typename TComponent> bool HasComponent(EntityId id) const
+		{
+			const auto entity = entities.Get(id);
+			return entity && entity->HasComponent<TComponent>();
+		}
 		template<typename TComponent> TComponent& GetComponent(EntityId id)
 		{
 			return TComponent::GetContainer().GetChecked(id);
@@ -374,7 +391,8 @@ namespace ECS
 			cached_iters.fill(0);
 
 			const ComponentCache filter = BuildCacheFilter<TComps...>();
-			for (EntityId id = entities.GetNext({}, filter); id.IsValid(); id = entities.GetNext(id, filter))
+			int already_tested = 0;
+			for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValid(); id = entities.GetNext(id, filter, already_tested))
 			{
 				std::apply(Func, ComponentsTupleBuilder<TComps...>::Build(id, cached_iters));
 			}
