@@ -9,8 +9,8 @@
 #include<tuple>
 #include<array>
 
-#define IMPLEMENT_COMPONENT(COMP) COMP::Container Component<COMP::kComponentTypeIdx, COMP::Container>::__container; \
-	template<> void ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId id) { COMP::GetContainer().Remove(id); }
+#define IMPLEMENT_COMPONENT(COMP) COMP::Container ECS::Component<COMP::kComponentTypeIdx, COMP::Container>::__container; \
+	template<> void ECS::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId id) { COMP::GetContainer().Remove(id); }
 
 namespace ECS
 {
@@ -53,7 +53,12 @@ namespace ECS
 		void Reset() {}
 	};
 
-	template<typename TComponent> struct DenseComponentContainer
+	template<bool TUseCachedIter> struct BaseComponentContainer
+	{
+		constexpr static const bool kUseCachedIter = TUseCachedIter;
+	};
+
+	template<typename TComponent> struct DenseComponentContainer : public BaseComponentContainer<false>
 	{
 	private:
 		TComponent components[kMaxEntityNum];
@@ -81,7 +86,7 @@ namespace ECS
 		}
 	};
 
-	template<typename TComponent> struct SortedComponentContainer
+	template<typename TComponent> struct SortedComponentContainer : public BaseComponentContainer<true>
 	{
 	private:
 		using TPair = std::pair<int, TComponent>;
@@ -119,6 +124,13 @@ namespace ECS
 			components.erase(it);
 		}
 
+		TComponent* Get(EntityId id)
+		{
+			auto it = DesiredPosition(id.index);
+			assert(it->first == id.index);
+			return (it->first == id.index) ? &it->second : nullptr;
+		}
+
 		TComponent* Get(EntityId id, int& iter)
 		{
 			auto it = DesiredPosition(id.index, iter);
@@ -137,7 +149,7 @@ namespace ECS
 		auto& GetCollection() { return components; }
 	};
 
-	template<typename TComponent> struct SparseComponentContainer
+	template<typename TComponent> struct SparseComponentContainer : public BaseComponentContainer<false>
 	{
 	private:
 		std::map<int, TComponent> components;
@@ -261,49 +273,20 @@ namespace ECS
 			}
 		};
 
-	private:
 		EntityContainer entities;
 
-		template<int I> struct ComponentRemover
+		template<int I> static void RecursiveRemoveComponent(EntityId id, Entity& entity)
 		{
-			static void Do(EntityId id, Entity& entity)
+			if constexpr(I > 0)
 			{
-				if constexpr(I > 0)
-				{
-					ComponentRemover<I - 1>::Do(id, entity);
-				}
-				if (entity.HasComponent(ComponentBase<I>::kComponentTypeIdx)) 
-				{ 
-					ComponentBase<I>::Remove(id); 
-				}
+				RecursiveRemoveComponent<I - 1>(id, entity);
 			}
-		};
-
-	public:
-		EntityId AddEntity() { return entities.Add(); }
-		void RemoveEntity(EntityId id)
-		{
-			ComponentRemover<kActuallyImplementedComponents - 1>::Do(id, entities.GetChecked(id));
-			entities.Remove(id);
+			if (entity.HasComponent(ComponentBase<I>::kComponentTypeIdx)) 
+			{ 
+				ComponentBase<I>::Remove(id); 
+			}
 		}
 
-	public:
-		template<typename TComponent> TComponent& GetComponent(EntityId id)
-		{
-			return TComponent::GetContainer().GetChecked(id);
-		}
-		template<typename TComponent> TComponent& AddComponent(EntityId id)
-		{
-			entities.GetChecked(id).Set<TComponent>(true);
-			return TComponent::GetContainer().Add(id);
-		}
-		template<typename TComponent> void RemoveComponent(EntityId id)
-		{
-			entities.GetChecked(id).Set<TComponent>(false);
-			TComponent::GetContainer().Remove(id);
-		}
-
-	private:
 		template<typename T, typename... Args> struct FilterBuilder
 		{
 			static ComponentCache Build()
@@ -322,50 +305,70 @@ namespace ECS
 			}
 		};
 
-	public:
-		template<typename... Args> static ComponentCache BuildCacheFilter() { return FilterBuilder<Args...>::Build(); }
-
-	private:
-		template<typename T> static constexpr bool NeedsCacheIter()
-		{
-			return std::is_same<T::Container, SortedComponentContainer<std::remove_const<T>::type>>::value;
-		}
-
 		template<typename... TComps> static constexpr int NumCachedIter()
 		{
-			return ((NeedsCacheIter<TComps>() ? 1 : 0) + ...);
+			return ((TComps::Container::kUseCachedIter ? 1 : 0) + ...);
 		}
 
-		template<typename T, typename... Args> struct TupleBuilder
+		template<typename TComp, typename... TComps> struct ComponentsTupleBuilder
 		{
-			template<typename TArr, int IterIdx = NumCachedIter<Args...>()>
+			template<typename TArr, int IterIdx = NumCachedIter<TComps...>()>
 			inline static auto Build(EntityId id, TArr& cached_iters)
 			{
-				return std::tuple_cat(TupleBuilder<T>::Build<TArr, IterIdx>(id, cached_iters)
-					, TupleBuilder<Args...>::Build<TArr>(id, cached_iters));
+				return std::tuple_cat(ComponentsTupleBuilder<TComp>::Build<TArr, IterIdx>(id, cached_iters)
+					, ComponentsTupleBuilder<TComps...>::Build<TArr>(id, cached_iters));
 			}
 		};
 
-		template<typename T> struct TupleBuilder<T>
+		template<typename TComp> struct ComponentsTupleBuilder<TComp>
 		{
 			template<typename TArr, int IterIdx = 0>
 			inline static auto Build(EntityId id, TArr& cached_iters)
 			{
-				if constexpr(NeedsCacheIter<T>())
+				if constexpr(TComp::Container::kUseCachedIter)
 				{
-					return std::make_tuple<T*>(T::GetContainer().Get(id, cached_iters[IterIdx]));
+					return std::make_tuple<TComp*>(TComp::GetContainer().Get(id, cached_iters[IterIdx]));
 				}
 				else
 				{
-					return std::make_tuple<T*>(T::GetContainer().Get(id));
+					return std::make_tuple<TComp*>(TComp::GetContainer().Get(id));
 				}
 			}
 		};
 
 	public:
 
-		template<typename TFunc, typename... TComps>
-		void Call(TFunc& Func)
+		template<typename... Args> static ComponentCache BuildCacheFilter() 
+		{ 
+			return FilterBuilder<Args...>::Build(); 
+		}
+
+		EntityId AddEntity() 
+		{ 
+			return entities.Add(); 
+		}
+		void RemoveEntity(EntityId id)
+		{
+			RecursiveRemoveComponent<kActuallyImplementedComponents - 1>(id, entities.GetChecked(id));
+			entities.Remove(id);
+		}
+
+		template<typename TComponent> TComponent& GetComponent(EntityId id)
+		{
+			return TComponent::GetContainer().GetChecked(id);
+		}
+		template<typename TComponent> TComponent& AddComponent(EntityId id)
+		{
+			entities.GetChecked(id).Set<TComponent>(true);
+			return TComponent::GetContainer().Add(id);
+		}
+		template<typename TComponent> void RemoveComponent(EntityId id)
+		{
+			entities.GetChecked(id).Set<TComponent>(false);
+			TComponent::GetContainer().Remove(id);
+		}
+
+		template<typename TFunc, typename... TComps> void Call(TFunc& Func)
 		{
 			std::array<int, NumCachedIter<TComps...>()> cached_iters;
 			cached_iters.fill(0);
@@ -373,12 +376,10 @@ namespace ECS
 			const ComponentCache filter = BuildCacheFilter<TComps...>();
 			for (EntityId id = entities.GetNext({}, filter); id.IsValid(); id = entities.GetNext(id, filter))
 			{
-				std::apply(Func, TupleBuilder<TComps...>::Build(id, cached_iters));
+				std::apply(Func, ComponentsTupleBuilder<TComps...>::Build(id, cached_iters));
 			}
 		}
-
-		template<typename THint, typename TFunc, typename... TComps>
-		void CallHint(TFunc& Func)
+		template<typename THint, typename TFunc, typename... TComps> void CallHint(TFunc& Func)
 		{
 			std::array<int, NumCachedIter<TComps...>()> cached_iters;
 			cached_iters.fill(0);
@@ -389,19 +390,19 @@ namespace ECS
 				const EntityId id(it.first);
 				if (entities.GetChecked(id).PassFilter(filter))
 				{
-					std::apply(Func, std::tuple_cat(std::make_tuple(&it.second), TupleBuilder<TComps...>::Build(id, cached_iters)));
+					std::apply(Func, std::tuple_cat(std::make_tuple(&it.second), ComponentsTupleBuilder<TComps...>::Build(id, cached_iters)));
 				}
 			}
 		}
-
-		template<typename TComp, typename TFunc>
-		void CallHintSingle(TFunc& Func)
+		template<typename TComp, typename TFunc> void CallHintSingle(TFunc& Func)
 		{
 			for (auto& it : TComp::GetContainer().GetCollection())
 			{
 				Func(&it.second);
 			}
 		}
+
+		//Const
 
 		//TESTS
 		//PROFILER
