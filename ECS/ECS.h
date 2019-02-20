@@ -16,7 +16,7 @@ namespace ECS
 {
 	static const constexpr int kMaxComponentTypeNum = 256;
 	static const constexpr int kMaxEntityNum = 1024;
-	static const constexpr int kActuallyImplementedComponents = 3;
+	static const constexpr int kActuallyImplementedComponents = 4;
 
 	class ECSManager;
 
@@ -33,6 +33,10 @@ namespace ECS
 		constexpr EntityId(TIndex _idx) : index(_idx)
 		{
 			assert(IsValid());
+		}
+		constexpr bool operator==(const EntityId& Other) const
+		{
+			return index == Other.index;
 		}
 	};
 
@@ -376,7 +380,20 @@ namespace ECS
 		};
 
 	public:
-		void Reset();
+		void Reset()
+		{
+			for (EntityId::TIndex i = 0; i < kMaxEntityNum; i++)
+			{
+				if (entities.Get(i))
+				{
+					RemoveEntity(i);
+				}
+			}
+		}
+		~ECSManager()
+		{
+			Reset();
+		}
 
 		EntityId AddEntity()
 		{ 
@@ -451,12 +468,8 @@ namespace ECS
 			}
 		}
 
-		//TODO:
-
-		//reset
 		//TESTS
 		//PROFILER
-		//Const
 		// Const, Exlusivity, Batches, threads
 	};
 }
