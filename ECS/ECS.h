@@ -1,6 +1,6 @@
 #pragma once
 
-#include<bitset>
+#include"bitset2\bitset2.hpp"
 #include<assert.h>
 #include<type_traits>
 #include<algorithm>
@@ -20,14 +20,17 @@ namespace ECS
 
 	class ECSManager;
 
+	using TCacheIter = unsigned int;
+
 	struct EntityId
 	{
-		int index = -1;
+		using TIndex = int16_t;
+		TIndex index = -1;
 
 		constexpr bool IsValid() const { return index >= 0 && index < kMaxEntityNum; }
 
-		EntityId() {}
-		EntityId(int _idx) : index(_idx)
+		constexpr EntityId() {}
+		constexpr EntityId(TIndex _idx) : index(_idx)
 		{
 			assert(IsValid());
 		}
@@ -86,31 +89,32 @@ namespace ECS
 		}
 	};
 
-	template<typename TComponent> struct SortedComponentContainer : public BaseComponentContainer<true>
+	template<typename TComponent, bool TUseBinarySearch> struct SortedComponentContainer : public BaseComponentContainer<true>
 	{
+		static const constexpr bool kUseBinarySearch = TUseBinarySearch;
 	private:
-		using TPair = std::pair<int, TComponent>;
+		using TPair = std::pair<EntityId::TIndex, TComponent>;
 		std::vector<TPair> components;
 
 	public:
-		static bool Less(const TPair& A, const TPair& B)
+		constexpr static bool Less(const TPair& A, const TPair& B)
 		{
 			return A.first < B.first;
 		}
 
-		auto DesiredPosition(int id)
+		constexpr auto DesiredPositionSearch(EntityId::TIndex id)
 		{
 			return std::lower_bound(components.begin(), components.end(), TPair{ id, TComponent{} }, &Less);
 		}
 
-		auto DesiredPosition(int id, int previous_pos)
+		constexpr auto DesiredPositionSearch(EntityId::TIndex id, TCacheIter previous_pos)
 		{
 			return std::lower_bound(components.begin() + previous_pos, components.end(), TPair{ id, TComponent{} }, &Less);
 		}
 
-		TComponent& Add(EntityId id)
+		constexpr TComponent& Add(EntityId id)
 		{
-			auto it = DesiredPosition(id.index);
+			auto it = DesiredPositionSearch(id.index);
 			auto new_it = components.insert(it, { id.index, TComponent{} });
 			new_it->second.Initialize();
 			return new_it->second;
@@ -118,7 +122,7 @@ namespace ECS
 
 		void Remove(EntityId id)
 		{
-			auto it = DesiredPosition(id.index);
+			auto it = DesiredPositionSearch(id.index);
 			assert(it->first == id.index);
 			it->second.Reset();
 			components.erase(it);
@@ -126,22 +130,42 @@ namespace ECS
 
 		TComponent* Get(EntityId id)
 		{
-			auto it = DesiredPosition(id.index);
+			auto it = DesiredPositionSearch(id.index);
 			assert(it->first == id.index);
 			return (it->first == id.index) ? &it->second : nullptr;
 		}
 
-		TComponent* Get(EntityId id, int& iter)
+		TComponent* Get(EntityId id, TCacheIter& cached_iter)
 		{
-			auto it = DesiredPosition(id.index, iter);
-			iter = std::distance(components.begin(), it) + 1;
-			assert(it->first == id.index);
-			return (it->first == id.index) ? &it->second : nullptr;
+			if constexpr(kUseBinarySearch)
+			{
+				auto it = DesiredPositionSearch(id.index, cached_iter);
+				assert((it != components.end()) && (it->first == id.index));
+				cached_iter = std::distance(components.begin(), it) + 1;
+				return &it->second;
+			}
+			else
+			{
+				for (auto it = components.begin() + cached_iter; it != components.end(); it++)
+				{
+					if (it->first == id.index)
+					{
+						cached_iter = std::distance(components.begin(), it) + 1;
+						return &it->second;
+					}
+					else if (it->first > id.index)
+					{
+						break;
+					}
+				}
+				assert(false);
+				return nullptr;
+			}
 		}
 
 		TComponent& GetChecked(EntityId id)
 		{
-			auto it = DesiredPosition(id.index);
+			auto it = DesiredPositionSearch(id.index);
 			assert(it->first == id.index);
 			return it->second;
 		}
@@ -152,7 +176,7 @@ namespace ECS
 	template<typename TComponent> struct SparseComponentContainer : public BaseComponentContainer<false>
 	{
 	private:
-		std::map<int, TComponent> components;
+		std::map<EntityId::TIndex, TComponent> components;
 
 	public:
 		TComponent & Add(EntityId id)
@@ -186,7 +210,7 @@ namespace ECS
 
 	class ECSManager
 	{
-		using ComponentCache = std::bitset<kMaxComponentTypeNum>;
+		using ComponentCache = Bitset2::bitset2<kMaxComponentTypeNum>;
 
 		struct Entity
 		{
@@ -194,16 +218,21 @@ namespace ECS
 			ComponentCache components_cache;
 
 		public:
-			bool IsEmpty() const { return components_cache.none(); }
-			bool PassFilter(const ComponentCache& pattern) const { return (pattern & (pattern ^ components_cache)).none(); }
-			bool HasComponent(int ComponentId) const { return components_cache.test(ComponentId); }
-			template<typename TComponent> bool HasComponent() const
+			constexpr bool IsEmpty() const { return components_cache.none(); }
+			constexpr bool PassFilter(const ComponentCache& filter) const 
+			{ 
+				return Bitset2::zip_fold_and(filter, components_cache,
+					[](ComponentCache::base_t v1, ComponentCache::base_t v2) noexcept
+					{ return (v1 & ~v2) == 0; }); // Any bit unset in v2 must not be set in v1
+			}
+			constexpr bool HasComponent(int ComponentId) const { return components_cache.test(ComponentId); }
+			template<typename TComponent> constexpr bool HasComponent() const
 			{
 				return components_cache.test(TComponent::kComponentTypeIdx);
 			}
 
-			void Reset() { components_cache.reset(); }
-			template<typename TComponent> void Set(bool value)
+			constexpr void Reset() { components_cache.reset(); }
+			template<typename TComponent> constexpr void Set(bool value)
 			{
 				assert(components_cache[TComponent::kComponentTypeIdx] != value);
 				components_cache[TComponent::kComponentTypeIdx] = value;
@@ -214,7 +243,7 @@ namespace ECS
 		{
 		private:
 			Entity entities_space[kMaxEntityNum];
-			std::bitset<kMaxEntityNum> used_entities;
+			Bitset2::bitset2<kMaxEntityNum> used_entities;
 			int cached_number = 0;
 		public:
 			const Entity* Get(EntityId Id) const
@@ -292,43 +321,48 @@ namespace ECS
 			}
 		}
 
-		template<typename T, typename... Args> struct FilterBuilder
+		template<typename TCompHead, typename... TCompsTail> struct FilterBuilder
 		{
-			static ComponentCache Build()
+			constexpr static ComponentCache Build()
 			{
-				return FilterBuilder<T>::Build() | FilterBuilder<Args...>::Build();
+				return FilterBuilder<TCompHead>::Build() | FilterBuilder<TCompsTail...>::Build();
 			}
 		};
 
-		template<typename T> struct FilterBuilder<T>
+		template<typename TComp> struct FilterBuilder<TComp>
 		{
-			static ComponentCache Build()
+			constexpr static ComponentCache Build()
 			{
 				ComponentCache c;
-				c.set(T::kComponentTypeIdx, true);
+				c.set(TComp::kComponentTypeIdx, true);
 				return c;
 			}
 		};
+
+		template<typename... TComps> constexpr static ComponentCache BuildCacheFilter()
+		{
+			return FilterBuilder<TComps...>::Build();
+		}
 
 		template<typename... TComps> static constexpr int NumCachedIter()
 		{
 			return ((TComps::Container::kUseCachedIter ? 1 : 0) + ...);
 		}
 
-		template<typename TComp, typename... TComps> struct ComponentsTupleBuilder
+		template<typename TCompHead, typename... TCompsTail> struct ComponentsTupleBuilder
 		{
-			template<typename TArr, int IterIdx = NumCachedIter<TComps...>()>
-			inline static auto Build(EntityId id, TArr& cached_iters)
+			template<typename TArr, int IterIdx = NumCachedIter<TCompsTail...>()>
+			static auto Build(EntityId id, TArr& cached_iters)
 			{
-				return std::tuple_cat(ComponentsTupleBuilder<TComp>::Build<TArr, IterIdx>(id, cached_iters)
-					, ComponentsTupleBuilder<TComps...>::Build<TArr>(id, cached_iters));
+				return std::tuple_cat(ComponentsTupleBuilder<TCompHead>::Build<TArr, IterIdx>(id, cached_iters)
+					, ComponentsTupleBuilder<TCompsTail...>::Build<TArr>(id, cached_iters));
 			}
 		};
 
 		template<typename TComp> struct ComponentsTupleBuilder<TComp>
 		{
 			template<typename TArr, int IterIdx = 0>
-			inline static auto Build(EntityId id, TArr& cached_iters)
+			static auto Build(EntityId id, TArr& cached_iters)
 			{
 				if constexpr(TComp::Container::kUseCachedIter)
 				{
@@ -341,13 +375,10 @@ namespace ECS
 			}
 		};
 
-		template<typename... Args> static ComponentCache BuildCacheFilter()
-		{
-			return FilterBuilder<Args...>::Build();
-		}
 	public:
+		void Reset();
 
-		EntityId AddEntity() 
+		EntityId AddEntity()
 		{ 
 			return entities.Add(); 
 		}
@@ -356,7 +387,7 @@ namespace ECS
 			RecursiveRemoveComponent<kActuallyImplementedComponents - 1>(id, entities.GetChecked(id));
 			entities.Remove(id);
 		}
-		int GetNumEntities() const 
+		int GetNumEntities() const
 		{ 
 			return entities.GetNumEntities(); 
 		}
@@ -387,7 +418,7 @@ namespace ECS
 
 		template<typename TFunc, typename... TComps> void Call(TFunc& Func)
 		{
-			std::array<int, NumCachedIter<TComps...>()> cached_iters;
+			std::array<TCacheIter, NumCachedIter<TComps...>()> cached_iters;
 			cached_iters.fill(0);
 
 			const ComponentCache filter = BuildCacheFilter<TComps...>();
@@ -399,7 +430,7 @@ namespace ECS
 		}
 		template<typename THint, typename TFunc, typename... TComps> void CallHint(TFunc& Func)
 		{
-			std::array<int, NumCachedIter<TComps...>()> cached_iters;
+			std::array<TCacheIter, NumCachedIter<TComps...>()> cached_iters;
 			cached_iters.fill(0);
 
 			const ComponentCache filter = BuildCacheFilter<THint, TComps...>();
@@ -420,11 +451,12 @@ namespace ECS
 			}
 		}
 
-		//Const
+		//TODO:
 
+		//reset
 		//TESTS
 		//PROFILER
-
+		//Const
 		// Const, Exlusivity, Batches, threads
 	};
 }

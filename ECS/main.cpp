@@ -10,7 +10,7 @@ struct PositionComponent : public Component<0, DenseComponentContainer<PositionC
 };
 IMPLEMENT_COMPONENT(PositionComponent);
 
-struct MovementComponent : public Component<1, SortedComponentContainer<MovementComponent>>
+struct MovementComponent : public Component<1, SortedComponentContainer<MovementComponent, false>>
 {
 	float x = 0;
 	float y = 0;
