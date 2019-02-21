@@ -1,5 +1,6 @@
 
-#include "ECS.h"
+#include "ECSContainer.h"
+#include "ECSManager.h"
 #include<iostream>
 
 using namespace ECS;
@@ -169,7 +170,50 @@ void Test_1()
 
 void Test_2()
 {
-	//Call....
+	for (int i = 0; i < 16; i++)
+	{
+		const EntityId id = ecs.AddEntity();
+		if (0 != (i & 1))
+		{
+			ecs.AddComponent<TestComponent0>(id).id = id;
+		}
+		if (0 != (i & 2))
+		{
+			ecs.AddComponent<TestComponent1>(id).id = id;
+		}
+		if (0 != (i & 4))
+		{
+			ecs.AddComponent<TestComponent2>(id).id = id;
+		}
+		if (0 != (i & 8))
+		{
+			ecs.AddComponent<TestComponent3>(id).id = id;
+		}
+	}
+	{
+		int counter = 0;
+		ecs.Call(ToFunc([&](EntityId id, const TestComponent0& t0, const TestComponent1* t1)
+		{
+			assert(t0.id == id);
+			assert(!t1 || (t1->id == id));
+			counter++;
+		}));
+		assert(8 == counter);
+	}
+
+	{
+		int counter = 0;
+		auto test_lambda = ToFunc([&](EntityId id, TestComponent0& t0, TestComponent1& t1, TestComponent2& t2, TestComponent3& t3)
+		{
+			assert(t0.id == id);
+			assert(t1.id == id);
+			assert(t2.id == id);
+			assert(t3.id == id);
+			counter++;
+		});
+		ecs.Call(test_lambda);
+		assert(1 == counter);
+	}
 }
 
 int main()
