@@ -214,6 +214,24 @@ void Test_2()
 		ecs.Call(test_lambda);
 		assert(1 == counter);
 	}
+
+	{
+		auto test_lambda = ToFunc([&](EntityId id, TestComponent1& t1, TestComponent2& t2, TestComponent3& t3)
+		{
+			assert(t1.id == id);
+			assert(t2.id == id);
+			assert(t3.id == id);
+		});
+		ecs.Call(test_lambda);
+	}
+
+	{
+		auto test_lambda = ToFunc([&](EntityId id, TestComponent1& t1)
+		{
+			assert(t1.id == id);
+		});
+		ecs.Call(test_lambda);
+	}
 }
 
 int main()

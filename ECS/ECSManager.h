@@ -1,14 +1,11 @@
 #pragma once
 
 #include "ECSBase.h"
-#include "bitset2\bitset2.hpp"
 
 namespace ECS
 {
 	class ECSManager
 	{
-		using ComponentCache = Bitset2::bitset2<kMaxComponentTypeNum>;
-
 		struct Entity
 		{
 		private:
@@ -118,106 +115,38 @@ namespace ECS
 			}
 		}
 
-		template<typename TCompHead, typename... TCompsTail> struct FilterBuilder
+		template<typename... TDecoratedComps> void CallNoHint(std::function<void(EntityId, TDecoratedComps...)> Func)
 		{
-			constexpr static ComponentCache Build()
-			{
-				return FilterBuilder<TCompHead>::Build() | FilterBuilder<TCompsTail...>::Build();
-			}
-		};
+			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
+			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
-		template<typename TComp> struct FilterBuilder<TComp>
-		{
-			constexpr static ComponentCache Build()
-			{
-				ComponentCache c;
-				c.set(RemoveDecorators<TComp>::type::kComponentTypeIdx, true);
-				return c;
-			}
-		};
+			const ComponentCache filter = Details::BuildCacheFilter<TDecoratedComps...>();
+			int already_tested = 0;
 
-		template<typename TComp> struct FilterBuilder<TComp*>
-		{
-			constexpr static ComponentCache Build()
+			for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValid()
+				; id = entities.GetNext(id, filter, already_tested))
 			{
-				return ComponentCache{};
+				using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
+				Func(id, Details::Unbox<TDecoratedComps, IndexOfParam>::Get(id, cached_iters)...);
 			}
-		};
-
-		template<typename... TComps> constexpr static ComponentCache BuildCacheFilter()
-		{
-			return FilterBuilder<TComps...>::Build();
 		}
 
-		template<typename... TComps> static constexpr int NumCachedIter()
+		template<typename TComp, typename... TDecoratedComps> void CallHint(std::function<void(EntityId, TComp, TDecoratedComps...)> Func)
 		{
-			return ((TComps::Container::kUseCachedIter ? 1 : 0) + ...);
+			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
+			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
+
+			const ComponentCache filter = Details::BuildCacheFilter<TComp, TDecoratedComps...>();
+			for (auto& it : Details::RemoveDecorators<TComp>::type::GetContainer().GetCollection())
+			{
+				const EntityId id(it.first);
+				if (entities.GetChecked(id).PassFilter(filter))
+				{
+					using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
+					Func(id, it.second, Details::Unbox<TDecoratedComps, IndexOfParam>::Get(id, cached_iters)...);
+				}
+			}
 		}
-
-		template<typename TCompHead, typename... TCompsTail> struct ComponentsTupleBuilder
-		{
-			template<typename TArr, int IterIdx = NumCachedIter<TCompsTail...>()>
-			static auto Build(EntityId id, TArr& cached_iters)
-			{
-				return std::tuple_cat(ComponentsTupleBuilder<TCompHead>::Build<TArr, IterIdx>(id, cached_iters)
-					, ComponentsTupleBuilder<TCompsTail...>::Build<TArr>(id, cached_iters));
-			}
-		};
-
-		template<typename TComp> struct ComponentsTupleBuilder<TComp>
-		{
-			template<typename TArr, int IterIdx = 0>
-			static auto Build(EntityId id, TArr& cached_iters)
-			{
-				if constexpr(TComp::Container::kUseCachedIter)
-				{
-					return std::make_tuple<TComp*>(TComp::GetContainer().Get(id, cached_iters[IterIdx]));
-				}
-				else
-				{
-					return std::make_tuple<TComp*>(TComp::GetContainer().GetOptional(id));
-				}
-			}
-		};
-
-		template<class TComp>
-		struct Unbox {};
-
-		template<class TComp>
-		struct Unbox<TComp&>
-		{
-			static TComp& Get(EntityId id)
-			{
-				return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id);
-			}
-		};
-
-		template<class TComp>
-		struct Unbox<const TComp&>
-		{
-			static const TComp& Get(EntityId id)
-			{
-				return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id);
-			}
-		};
-
-		template<class TComp>
-		struct Unbox<TComp*>
-		{
-			static TComp* Get(EntityId id)
-			{
-				return RemoveDecorators<TComp>::type::GetContainer().GetOptional(id);
-			}
-		};
-
-		template<class TComp>
-		struct Unbox<const TComp*>
-		{
-			static const TComp* Get(EntityId id)
-			{
-				return RemoveDecorators<TComp>::type::GetContainer().GetOptional(id);
-			}
-		};
 
 	public:
 		void Reset()
@@ -275,73 +204,25 @@ namespace ECS
 
 		template<typename... TDecoratedComps> void Call(std::function<void(EntityId, TDecoratedComps...)> Func)
 		{
-			std::array<TCacheIter, NumCachedIter<typename RemoveDecorators<TDecoratedComps>::type...>()> cached_iters;
-			cached_iters.fill(0);
-
-			const ComponentCache filter = BuildCacheFilter<TDecoratedComps...>();
-			int already_tested = 0;
-			for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValid()
-				; id = entities.GetNext(id, filter, already_tested))
+			using Head = typename Details::Split<TDecoratedComps...>::Head;
+			using HeadContainer = typename Details::RemoveDecorators<Head>::type::Container;
+			if constexpr(HeadContainer::kUseAsFilter && !std::is_pointer_v<Head>)
 			{
-				Func(id, Unbox<TDecoratedComps>::Get(id)...);
+				CallHint<TDecoratedComps...>(Func);
+			}
+			else
+			{
+				CallNoHint<TDecoratedComps...>(Func);
 			}
 		}
-		/*
-		template<typename... TComps> void Call(std::function<void(TComps*...)> Func)
-		{
-		std::array<TCacheIter, NumCachedIter<TComps...>()> cached_iters;
-		cached_iters.fill(0);
 
-		const ComponentCache filter = BuildCacheFilter<TComps...>();
-		int already_tested = 0;
-		for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValid(); id = entities.GetNext(id, filter, already_tested))
-		{
-		std::apply(Func, ComponentsTupleBuilder<TComps...>::Build(id, cached_iters));
-		}
-		}
+		// empty component
+		// perfect forwarding
 
-		template<typename... TComps> void Call(std::function<void(EntityId, TComps*...)> Func)
-		{
-		std::array<TCacheIter, NumCachedIter<TComps...>()> cached_iters;
-		cached_iters.fill(0);
-
-		const ComponentCache filter = BuildCacheFilter<TComps...>();
-		int already_tested = 0;
-		for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValid(); id = entities.GetNext(id, filter, already_tested))
-		{
-		std::apply(Func, std::tuple_cat(std::make_tuple(id), ComponentsTupleBuilder<TComps...>::Build(id, cached_iters)));
-		}
-		}
-
-		template<typename THint, typename TFunc, typename... TComps> void CallHint(TFunc& Func)
-		{
-		std::array<TCacheIter, NumCachedIter<TComps...>()> cached_iters;
-		cached_iters.fill(0);
-
-		const ComponentCache filter = BuildCacheFilter<THint, TComps...>();
-		for (auto& it : THint::GetContainer().GetCollection())
-		{
-		const EntityId id(it.first);
-		if (entities.GetChecked(id).PassFilter(filter))
-		{
-		std::apply(Func, std::tuple_cat(std::make_tuple(&it.second), ComponentsTupleBuilder<TComps...>::Build(id, cached_iters)));
-		}
-		}
-		}
-		template<typename TComp, typename TFunc> void CallHintSingle(TFunc& Func)
-		{
-		for (auto& it : TComp::GetContainer().GetCollection())
-		{
-		Func(&it.second);
-		}
-		}
-		*/
-		// cached iter
-		// hint
-
-		//TESTS
-		//PROFILER
+		// PROFILER
 		// Const, Exlusivity, Batches, threads
+
+		// Every bug found -> add a test
 
 		//Optimization: Put similar entities next to eaxh other
 	};

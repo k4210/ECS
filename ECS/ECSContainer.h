@@ -4,7 +4,7 @@
 
 namespace ECS
 {
-	template<typename TComponent> struct DenseComponentContainer : public BaseComponentContainer<false>
+	template<typename TComponent> struct DenseComponentContainer : public BaseComponentContainer<false, false>
 	{
 	private:
 		TComponent components[kMaxEntityNum];
@@ -22,7 +22,7 @@ namespace ECS
 		TComponent& GetChecked(EntityId id) { return components[id.index]; }
 	};
 
-	template<typename TComponent, bool TUseBinarySearch> struct SortedComponentContainer : public BaseComponentContainer<true>
+	template<typename TComponent, bool TUseBinarySearch> struct SortedComponentContainer : public BaseComponentContainer<true, true>
 	{
 		static const constexpr bool kUseBinarySearch = TUseBinarySearch;
 	private:
@@ -117,7 +117,7 @@ namespace ECS
 		auto& GetCollection() { return components; }
 	};
 
-	template<typename TComponent> struct SparseComponentContainer : public BaseComponentContainer<false>
+	template<typename TComponent> struct SparseComponentContainer : public BaseComponentContainer<false, true>
 	{
 	private:
 		std::map<EntityId::TIndex, TComponent> components;
