@@ -4,6 +4,7 @@
 #include<map>
 #include<vector>
 #include<algorithm>
+//#include<deque>
 
 namespace ECS
 {
@@ -31,6 +32,7 @@ namespace ECS
 	private:
 		using TPair = std::pair<EntityId::TIndex, TComponent>;
 		std::vector<TPair> components;
+		//std::deque<TPair> components;
 
 		constexpr static bool Less(const TPair& A, const TPair& B)
 		{
@@ -43,6 +45,11 @@ namespace ECS
 		}
 
 	public:
+		SortedComponentContainer()
+		{
+			components.reserve(TComponent::kInitialReserve);
+		}
+
 		constexpr TComponent& Add(EntityId id)
 		{
 			auto it = DesiredPositionSearch(id.index);

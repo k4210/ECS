@@ -9,14 +9,7 @@ namespace ECS
 	{
 		constexpr static ComponentCache Get()
 		{
-			if constexpr(sizeof...(TComps) > 0)
-			{
-				return Details::BuildCacheFilter<TComps...>();
-			}
-			else
-			{
-				return ComponentCache{};
-			}
+			return Details::FilterBuilder<false, Details::EComponentFilerOptions::BothMutableAndConst>::Build<TComps...>();
 		}
 	};
 
@@ -139,7 +132,8 @@ namespace ECS
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
-			constexpr ComponentCache filter = TFilter::Get() | Details::BuildCacheFilter<TDecoratedComps...>();
+			constexpr ComponentCache filter = TFilter::Get() 
+				| Details::FilterBuilder<true, Details::EComponentFilerOptions::BothMutableAndConst>::Build<TDecoratedComps...>();
 			int already_tested = 0;
 
 			for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValid()
@@ -155,7 +149,8 @@ namespace ECS
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
-			constexpr ComponentCache filter = TFilter::Get() | Details::BuildCacheFilter<TComp, TDecoratedComps...>();
+			constexpr ComponentCache filter = TFilter::Get()
+				| Details::FilterBuilder<true, Details::EComponentFilerOptions::BothMutableAndConst>::Build<TDecoratedComps...>();
 			for (auto& it : Details::RemoveDecorators<TComp>::type::GetContainer().GetCollection())
 			{
 				const EntityId id(it.first);
