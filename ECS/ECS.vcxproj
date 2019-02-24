@@ -120,6 +120,7 @@
     <ClInclude Include="ECSBase.h" />
     <ClInclude Include="ECSContainer.h" />
     <ClInclude Include="ECSManager.h" />
+    <ClInclude Include="ECSManagerAsync.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />

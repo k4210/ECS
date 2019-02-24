@@ -2,22 +2,22 @@
 
 #include<assert.h>
 #include<type_traits>
-#include<algorithm>
-#include<map>
-#include<vector>
-#include<tuple>
-#include<array>
 #include<functional>
 #include "bitset2\bitset2.hpp"
 
 #define IMPLEMENT_COMPONENT(COMP) COMP::Container ECS::Component<COMP::kComponentTypeIdx, COMP::Container>::__container; \
-	template<> void ECS::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId id) { COMP::GetContainer().Remove(id); }
+	template<> void ECS::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId id) { COMP::GetContainer().Remove(id); } \
+
+#define IMPLEMENT_EMPTY_COMPONENT(COMP) template<> void ECS::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId) { }
 
 namespace ECS
 {
 	static const constexpr int kMaxComponentTypeNum = 256;
 	static const constexpr int kMaxEntityNum = 1024;
-	static const constexpr int kActuallyImplementedComponents = 4;
+	static const constexpr int kActuallyImplementedComponents = 5;
+	static const constexpr int kMaxConcurrentWorkerThreads = 4;
+
+	static_assert(kActuallyImplementedComponents <= kMaxComponentTypeNum, "too many component types");
 
 	struct EntityId
 	{
@@ -39,11 +39,19 @@ namespace ECS
 
 	using TCacheIter = unsigned int;
 
-	template<int T> struct ComponentBase
+	template<int T, bool TIsEmpty> struct AnyComponentBase
 	{
 		static const constexpr int kComponentTypeIdx = T; //use  boost::hana::type_c ?
 		static_assert(kComponentTypeIdx < kMaxComponentTypeNum, "too many component types");
 		static_assert(kComponentTypeIdx < kActuallyImplementedComponents, "not implemented component");
+
+		static const constexpr bool kIsEmpty = TIsEmpty;
+	};
+
+	template<int T> struct EmptyComponent : public AnyComponentBase<T, true> {};
+
+	template<int T> struct ComponentBase : public AnyComponentBase<T, false>
+	{
 	private:
 		friend class ECSManager;
 		static void Remove(EntityId id);
@@ -112,9 +120,7 @@ namespace ECS
 		{
 			constexpr static ComponentCache Build()
 			{
-				ComponentCache c;
-				c.set(RemoveDecorators<TComp>::type::kComponentTypeIdx, true);
-				return c;
+				return ComponentCache{ 1 } << RemoveDecorators<TComp>::type::kComponentTypeIdx;
 			}
 		};
 
@@ -126,7 +132,7 @@ namespace ECS
 			}
 		};
 
-		template<typename... TComps> constexpr static ComponentCache BuildCacheFilter()
+		template<typename... TComps> constexpr ComponentCache BuildCacheFilter()
 		{
 			return FilterBuilder<TComps...>::Build();
 		}
@@ -136,60 +142,33 @@ namespace ECS
 			return  ((TComps::Container::kUseCachedIter ? 1 : 0) + ... + 0);
 		}
 
-		template<typename TCompHead, typename... TCompsTail> struct ComponentsTupleBuilder
-		{
-			template<typename TArr, int IterIdx = NumCachedIter<TCompsTail...>()>
-			static auto Build(EntityId id, TArr& cached_iters)
-			{
-				return std::tuple_cat(ComponentsTupleBuilder<TCompHead>::Build<TArr, IterIdx>(id, cached_iters)
-					, ComponentsTupleBuilder<TCompsTail...>::Build<TArr>(id, cached_iters));
-			}
-		};
-
-		template<typename TComp> struct ComponentsTupleBuilder<TComp>
-		{
-			template<typename TArr, int IterIdx = 0>
-			static auto Build(EntityId id, TArr& cached_iters)
-			{
-				if constexpr(TComp::Container::kUseCachedIter)
-				{
-					return std::make_tuple<TComp*>(TComp::GetContainer().Get(id, cached_iters[IterIdx]));
-				}
-				else
-				{
-					return std::make_tuple<TComp*>(TComp::GetContainer().GetOptional(id));
-				}
-			}
-		};
-
-		template<class TComp, typename TIndex>
+		template<class TComp, int TIndex>
 		struct Unbox {};
 
-		template<class TComp, typename TIndex>
+		template<class TComp, int TIndex>
 		struct Unbox<TComp&, TIndex>
 		{
-			template<typename TArr> static TComp& Get(EntityId id, TArr& arr)
+			template<typename TArr> static TComp& Get(EntityId id, TArr& arr, const ComponentCache&)
 			{
 				if constexpr(RemoveDecorators<TComp>::type::Container::kUseCachedIter)
 				{
-					constexpr auto idx = TIndex::Get<TComp&>();
-					return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id, arr[idx]);
+					return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id, arr[TIndex]);
 				}
 				return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id);
 			}
 		};
 
-		template<class TComp, typename TIndex>
-		struct Unbox<TComp*, TIndex>
+		template<class TDecoratedComp, int TIndex>
+		struct Unbox<TDecoratedComp*, TIndex>
 		{
-			template<typename TArr> static TComp* Get(EntityId id, TArr& arr)
+			template<typename TArr> static TDecoratedComp* Get(EntityId id, TArr& arr, const ComponentCache& component_cache)
 			{
-				if constexpr(RemoveDecorators<TComp>::type::Container::kUseCachedIter)
+				using TComp = typename RemoveDecorators<TDecoratedComp>::type;
+				if (component_cache.test(TComp::kComponentTypeIdx))
 				{
-					constexpr auto idx = TIndex::Get<TComp*>();
-					return RemoveDecorators<TComp>::type::GetContainer().GetOptional(id, arr[idx]);
+					return &(Unbox<TDecoratedComp&, TIndex>::Get<TArr>(id, arr, component_cache));
 				}
-				return RemoveDecorators<TComp>::type::GetContainer().GetOptional(id);
+				return nullptr;
 			}
 		};
 

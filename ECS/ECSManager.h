@@ -1,11 +1,28 @@
 #pragma once
 
 #include "ECSBase.h"
+#include<array>
 
 namespace ECS
 {
+	template<typename... TComps> struct Filter
+	{
+		constexpr static ComponentCache Get()
+		{
+			if constexpr(sizeof...(TComps) > 0)
+			{
+				return Details::BuildCacheFilter<TComps...>();
+			}
+			else
+			{
+				return ComponentCache{};
+			}
+		}
+	};
+
 	class ECSManager
 	{
+	protected:
 		struct Entity
 		{
 		private:
@@ -37,51 +54,50 @@ namespace ECS
 		{
 		private:
 			Entity entities_space[kMaxEntityNum];
-			Bitset2::bitset2<kMaxEntityNum> used_entities;
+			Bitset2::bitset2<kMaxEntityNum> free_entities;
 			int cached_number = 0;
 		public:
-			const Entity* Get(EntityId Id) const
+			EntityContainer()
 			{
-				return (Id.IsValid() && used_entities.test(Id.index)) ? &entities_space[Id.index] : nullptr;
+				free_entities.set();
+			}
+
+			const Entity* Get(EntityId id) const
+			{
+				return (id.IsValid() && !free_entities.test(id.index)) ? &entities_space[id.index] : nullptr;
 			}
 
 			Entity& GetChecked(EntityId id)
 			{
-				assert(id.IsValid() && used_entities.test(id.index));
+				assert(id.IsValid() && !free_entities.test(id.index));
 				return entities_space[id.index];
 			}
 
-			EntityId Add()
+			EntityId Add(unsigned int min_position)
 			{
-				int first_zero_idx = -1;
-				for (std::size_t i = 0; i < used_entities.size(); ++i)
-				{
-					if (!used_entities.test(i))
-					{
-						first_zero_idx = i;
-						break;
-					}
-				}
-				assert(first_zero_idx >= 0);
+				std::size_t first_zero_idx = (0 == min_position) 
+					? free_entities.find_first()
+					: free_entities.find_next(min_position - 1);
+				assert(first_zero_idx != Bitset2::bitset2<kMaxEntityNum>::npos);
 				if (first_zero_idx >= 0)
 				{
-					used_entities[first_zero_idx] = 1;
+					free_entities[first_zero_idx] = false;
 					assert(entities_space[first_zero_idx].IsEmpty());
 					cached_number++;
-					return EntityId(first_zero_idx);
+					return EntityId(static_cast<EntityId::TIndex>(first_zero_idx));
 				}
 				return EntityId();
 			}
 
 			void Remove(EntityId id)
 			{
-				const bool bProperId = id.IsValid() && used_entities.test(id.index);
+				const bool bProperId = id.IsValid() && !free_entities.test(id.index);
 				assert(bProperId);
 				if (bProperId)
 				{
 					cached_number--;
 					entities_space[id.index].Reset();
-					used_entities.set(id.index, false);
+					free_entities.set(id.index, true);
 				}
 			}
 
@@ -91,10 +107,13 @@ namespace ECS
 			{
 				for (int it = id.index + 1; (it < kMaxEntityNum) && (already_tested < cached_number); it++)
 				{
-					already_tested++;
-					if (used_entities.test(it) && entities_space[it].PassFilter(pattern))
+					if (!free_entities.test(it))
 					{
-						return EntityId(it);
+						already_tested++;
+						if (entities_space[it].PassFilter(pattern))
+						{
+							return EntityId(it);
+						}
 					}
 				}
 				return EntityId();
@@ -115,35 +134,35 @@ namespace ECS
 			}
 		}
 
-		template<typename... TDecoratedComps> void CallNoHint(std::function<void(EntityId, TDecoratedComps...)> Func)
+		template<typename TFilter, typename... TDecoratedComps> void CallNoHint(const std::function<void(EntityId, TDecoratedComps...)>& Func)
 		{
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
-			const ComponentCache filter = Details::BuildCacheFilter<TDecoratedComps...>();
+			constexpr ComponentCache filter = TFilter::Get() | Details::BuildCacheFilter<TDecoratedComps...>();
 			int already_tested = 0;
 
 			for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValid()
 				; id = entities.GetNext(id, filter, already_tested))
 			{
 				using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
-				Func(id, Details::Unbox<TDecoratedComps, IndexOfParam>::Get(id, cached_iters)...);
+				Func(id, Details::Unbox<TDecoratedComps, IndexOfParam::Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
 			}
 		}
 
-		template<typename TComp, typename... TDecoratedComps> void CallHint(std::function<void(EntityId, TComp, TDecoratedComps...)> Func)
+		template<typename TFilter, typename TComp, typename... TDecoratedComps> void CallHint(const std::function<void(EntityId, TComp, TDecoratedComps...)>& Func)
 		{
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
-			const ComponentCache filter = Details::BuildCacheFilter<TComp, TDecoratedComps...>();
+			constexpr ComponentCache filter = TFilter::Get() | Details::BuildCacheFilter<TComp, TDecoratedComps...>();
 			for (auto& it : Details::RemoveDecorators<TComp>::type::GetContainer().GetCollection())
 			{
 				const EntityId id(it.first);
 				if (entities.GetChecked(id).PassFilter(filter))
 				{
 					using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
-					Func(id, it.second, Details::Unbox<TDecoratedComps, IndexOfParam>::Get(id, cached_iters)...);
+					Func(id, it.second, Details::Unbox<TDecoratedComps, IndexOfParam::Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
 				}
 			}
 		}
@@ -164,9 +183,9 @@ namespace ECS
 			Reset();
 		}
 
-		EntityId AddEntity()
+		EntityId AddEntity(unsigned int MinPosition = 0)
 		{
-			return entities.Add();
+			return entities.Add(MinPosition);
 		}
 		void RemoveEntity(EntityId id)
 		{
@@ -189,41 +208,42 @@ namespace ECS
 		}
 		template<typename TComponent> TComponent& GetComponent(EntityId id)
 		{
+			static_assert(!TComponent::kIsEmpty, "cannot get an empty component");
 			return TComponent::GetContainer().GetChecked(id);
 		}
 		template<typename TComponent> TComponent& AddComponent(EntityId id)
 		{
+			static_assert(!TComponent::kIsEmpty, "cannot add an empty component");
 			entities.GetChecked(id).Set<TComponent>(true);
 			return TComponent::GetContainer().Add(id);
+		}
+		template<typename TComponent> void AddEmptyComponent(EntityId id)
+		{
+			static_assert(TComponent::kIsEmpty, "cannot add an empty component");
+			entities.GetChecked(id).Set<TComponent>(true);
 		}
 		template<typename TComponent> void RemoveComponent(EntityId id)
 		{
 			entities.GetChecked(id).Set<TComponent>(false);
-			TComponent::GetContainer().Remove(id);
+			if constexpr(!TComponent::kIsEmpty)
+			{
+				TComponent::GetContainer().Remove(id);
+			}
 		}
 
-		template<typename... TDecoratedComps> void Call(std::function<void(EntityId, TDecoratedComps...)> Func)
+		template<typename TFilter = typename Filter<>, typename... TDecoratedComps> void Call(const std::function<void(EntityId, TDecoratedComps...)>& Func)
 		{
+			using TFunc = typename std::function<void(EntityId, TDecoratedComps...)>;
 			using Head = typename Details::Split<TDecoratedComps...>::Head;
 			using HeadContainer = typename Details::RemoveDecorators<Head>::type::Container;
 			if constexpr(HeadContainer::kUseAsFilter && !std::is_pointer_v<Head>)
 			{
-				CallHint<TDecoratedComps...>(Func);
+				CallHint<TFilter, TDecoratedComps...>(Func);
 			}
 			else
 			{
-				CallNoHint<TDecoratedComps...>(Func);
+				CallNoHint<TFilter, TDecoratedComps...>(Func);
 			}
 		}
-
-		// empty component
-		// perfect forwarding
-
-		// PROFILER
-		// Const, Exlusivity, Batches, threads
-
-		// Every bug found -> add a test
-
-		//Optimization: Put similar entities next to eaxh other
 	};
 }

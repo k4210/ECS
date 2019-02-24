@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ECSBase.h"
+#include<map>
+#include<vector>
+#include<algorithm>
 
 namespace ECS
 {
@@ -18,33 +21,28 @@ namespace ECS
 
 		void Remove(EntityId id) { components[id.index].Reset(); }
 
-		TComponent* GetOptional(EntityId id) { return &components[id.index]; }
 		TComponent& GetChecked(EntityId id) { return components[id.index]; }
 	};
 
 	template<typename TComponent, bool TUseBinarySearch> struct SortedComponentContainer : public BaseComponentContainer<true, true>
 	{
 		static const constexpr bool kUseBinarySearch = TUseBinarySearch;
+
 	private:
 		using TPair = std::pair<EntityId::TIndex, TComponent>;
 		std::vector<TPair> components;
 
-	public:
 		constexpr static bool Less(const TPair& A, const TPair& B)
 		{
 			return A.first < B.first;
 		}
 
-		constexpr auto DesiredPositionSearch(EntityId::TIndex id)
-		{
-			return std::lower_bound(components.begin(), components.end(), TPair{ id, TComponent{} }, &Less);
-		}
-
-		constexpr auto DesiredPositionSearch(EntityId::TIndex id, TCacheIter previous_pos)
+		constexpr auto DesiredPositionSearch(EntityId::TIndex id, TCacheIter previous_pos = 0)
 		{
 			return std::lower_bound(components.begin() + previous_pos, components.end(), TPair{ id, TComponent{} }, &Less);
 		}
 
+	public:
 		constexpr TComponent& Add(EntityId id)
 		{
 			auto it = DesiredPositionSearch(id.index);
@@ -61,57 +59,39 @@ namespace ECS
 			components.erase(it);
 		}
 
-		TComponent* Get(EntityId id, TCacheIter& cached_iter)
-		{
-			if constexpr(kUseBinarySearch)
-			{
-				auto it = DesiredPositionSearch(id.index, cached_iter);
-				const bool bOk = (it != components.end()) && (it->first == id.index);
-				cached_iter = std::distance(components.begin(), it) + (bOk ? 1 : 0);
-				return bOk ? &it->second : nullptr;
-			}
-			else
-			{
-				for (auto it = components.begin() + cached_iter; it != components.end(); it++)
-				{
-					if (it->first == id.index)
-					{
-						cached_iter = std::distance(components.begin(), it) + 1;
-						return &it->second;
-					}
-					else if (it->first > id.index)
-					{
-						cached_iter = std::distance(components.begin(), it);
-						break;
-					}
-				}
-				return nullptr;
-			}
-		}
-
-		TComponent* GetOptional(EntityId id)
-		{
-			auto it = DesiredPositionSearch(id.index);
-			return (it->first == id.index) ? &it->second : nullptr;
-		}
-
-		TComponent* GetOptional(EntityId id, TCacheIter& cached_iter)
-		{
-			return Get(id, cached_iter);
-		}
-
 		TComponent& GetChecked(EntityId id)
 		{
 			auto it = DesiredPositionSearch(id.index);
-			assert(it->first == id.index);
+			assert((it != components.end()) && (it->first == id.index));
 			return it->second;
 		}
 
 		TComponent& GetChecked(EntityId id, TCacheIter& cached_iter)
 		{
-			auto ptr = Get(id, cached_iter);
-			assert(ptr);
-			return *ptr;
+			auto it = [&]() 
+			{
+				if constexpr(kUseBinarySearch)
+				{
+					return DesiredPositionSearch(id.index, cached_iter);
+				}
+				else
+				{
+					auto it = components.begin() + cached_iter;
+					for (;it != components.end(); it++)
+					{
+						if (it->first == id.index)
+						{
+							break;
+						}
+						assert(it->first < id.index);
+					}
+					return it;
+				}
+			}();
+
+			assert((it != components.end()) && (it->first == id.index));
+			cached_iter = std::distance(components.begin(), it) + 1;
+			return it->second;
 		}
 
 		auto& GetCollection() { return components; }
@@ -136,12 +116,6 @@ namespace ECS
 			assert(iter != components.end());
 			iter->second.Reset();
 			components.erase(iter);
-		}
-
-		TComponent* GetOptional(EntityId id)
-		{
-			auto iter = components.find(id.index);
-			return (iter != components.end()) ? &(iter->second) : nullptr;
 		}
 
 		TComponent& GetChecked(EntityId id) { return components.at(id.index); }

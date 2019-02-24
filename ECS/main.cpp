@@ -1,34 +1,54 @@
-
 #include "ECSContainer.h"
-#include "ECSManager.h"
+#include "ECSManagerAsync.h"
 #include<iostream>
 
 using namespace ECS;
+
 
 struct TestComponent0 : public Component<0, DenseComponentContainer<TestComponent0>>
 {
 	EntityId id;
 	int value = 0;
+	bool bIsInitializesd = false;
+	void Initialize() { bIsInitializesd = true; }
+	void Reset() { assert(bIsInitializesd); bIsInitializesd = false;}
 };
 IMPLEMENT_COMPONENT(TestComponent0);
+
 struct TestComponent1 : public Component<1, SortedComponentContainer<TestComponent1, false>>
 {
 	EntityId id;
 	int value = 0;
+	bool bIsInitializesd = false;
+	void Initialize() { bIsInitializesd = true; }
+	void Reset() { assert(bIsInitializesd); bIsInitializesd = false; }
 };
 IMPLEMENT_COMPONENT(TestComponent1);
+
 struct TestComponent2 : public Component<2, SortedComponentContainer<TestComponent2, true>>
 {
 	EntityId id;
 	int value = 0;
+	bool bIsInitializesd = false;
+	void Initialize() { bIsInitializesd = true; }
+	void Reset() { assert(bIsInitializesd); bIsInitializesd = false; }
 };
 IMPLEMENT_COMPONENT(TestComponent2);
+
 struct TestComponent3 : public Component<3, SparseComponentContainer<TestComponent3>>
 {
 	EntityId id;
 	int value = 0;
+	bool bIsInitializesd = false;
+	void Initialize() { bIsInitializesd = true; }
+	void Reset() { assert(bIsInitializesd); bIsInitializesd = false; }
 };
 IMPLEMENT_COMPONENT(TestComponent3);
+
+struct EmptyComponent0 : EmptyComponent<4> {};
+IMPLEMENT_EMPTY_COMPONENT(EmptyComponent0);
+
+
 /*
 struct PositionComponent : public Component<0, DenseComponentContainer<PositionComponent>>
 {
@@ -79,7 +99,7 @@ void UpdateAcceleration(ECSManager& ecs)
 	ecs.CallHintSingle<AccelerationComponent>(update_acc);
 }
 */
-ECSManager ecs;
+ECSManagerAsync ecs;
 
 void Test_0()
 {
@@ -91,9 +111,9 @@ void Test_0()
 	assert(ecs.IsValidEntity(id0));
 	assert(1 == ecs.GetNumEntities());
 	assert(!ecs.IsValidEntity(1));//
-	const EntityId id1 = ecs.AddEntity();
+	const EntityId id1 = ecs.AddEntity(100);
 	assert(id1.IsValid());
-	assert(1 == id1.index);//
+	assert(100 == id1.index);//
 	assert(ecs.IsValidEntity(id1));
 	assert(2 == ecs.GetNumEntities());
 	assert(ecs.IsValidEntity(id1));
@@ -172,7 +192,7 @@ void Test_2()
 {
 	for (int i = 0; i < 16; i++)
 	{
-		const EntityId id = ecs.AddEntity();
+		const EntityId id = ecs.AddEntity(64);
 		if (0 != (i & 1))
 		{
 			ecs.AddComponent<TestComponent0>(id).id = id;
@@ -188,17 +208,32 @@ void Test_2()
 		if (0 != (i & 8))
 		{
 			ecs.AddComponent<TestComponent3>(id).id = id;
+			ecs.AddEmptyComponent<EmptyComponent0>(id);
 		}
 	}
+
 	{
 		int counter = 0;
-		ecs.Call(ToFunc([&](EntityId id, const TestComponent0& t0, const TestComponent1* t1)
+		ecs.Call<Filter<EmptyComponent0>>(ToFunc([&](EntityId id, const TestComponent0* t0, const TestComponent1* t1)
+		{
+			assert(!t0 || (t0->id == id));
+			assert(!t1 || (t1->id == id));
+			counter++;
+			assert(ecs.HasComponent<EmptyComponent0>(id));
+		}));
+		assert(8 == counter);
+	}
+
+	{
+		int counter = 0;
+		ecs.Call<Filter<TestComponent1>>(ToFunc([&](EntityId id, const TestComponent0& t0, const TestComponent1* t1)
 		{
 			assert(t0.id == id);
 			assert(!t1 || (t1->id == id));
 			counter++;
+			assert(ecs.HasComponent<TestComponent1>(id));
 		}));
-		assert(8 == counter);
+		assert(4 == counter);
 	}
 
 	{
@@ -224,13 +259,15 @@ void Test_2()
 		});
 		ecs.Call(test_lambda);
 	}
-
 	{
+		int counter = 0;
 		auto test_lambda = ToFunc([&](EntityId id, TestComponent1& t1)
 		{
 			assert(t1.id == id);
+			counter++;
 		});
 		ecs.Call(test_lambda);
+		assert(8 == counter);
 	}
 }
 
