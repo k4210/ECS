@@ -3,6 +3,7 @@
 #include<assert.h>
 #include<type_traits>
 #include<functional>
+#include<chrono>
 #include "bitset2\bitset2.hpp"
 
 #define IMPLEMENT_COMPONENT(COMP) COMP::Container ECS::Component<COMP::kComponentTypeIdx, COMP::Container>::__container; \
@@ -10,8 +11,34 @@
 
 #define IMPLEMENT_EMPTY_COMPONENT(COMP) template<> void ECS::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId) { }
 
+#define ECS_LOG_ENABLED 1
+#if ECS_LOG_ENABLED
+#define LOG(x) x
+#define LOG_PARAM(x) , x
+#else
+#define LOG(x)
+#define LOG_PARAM(x)
+#endif
+
 namespace ECS
 {
+	struct ScopeDurationLog
+	{
+	private:
+		std::chrono::time_point<std::chrono::system_clock> start;
+		const char* format = nullptr;
+		const char* name = nullptr;
+	public:
+		ScopeDurationLog(const char* in_format, const char* in_name)
+			: start(std::chrono::system_clock::now())
+			, format(in_format), name(in_name) {}
+		~ScopeDurationLog()
+		{
+			const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start);
+			printf(format, name, duration_us.count());
+		}
+	};
+
 	static const constexpr int kMaxComponentTypeNum = 256;
 	static const constexpr int kMaxEntityNum = 1024;
 	static const constexpr int kActuallyImplementedComponents = 5;

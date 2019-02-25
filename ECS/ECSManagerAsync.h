@@ -54,6 +54,7 @@ namespace ECS
 			ComponentCache read_only_components;
 			ComponentCache mutable_components;
 			ExecutionStreamId preserve_order_in_execution_stream;
+			LOG(const char* task_name = nullptr;)
 		};
 
 		class WorkerThread
@@ -63,10 +64,12 @@ namespace ECS
 			std::thread thread;
 			std::optional<Task> task;
 			std::atomic_bool runs = false;
+			LOG(const char* worker_name = nullptr;)
 
-			WorkerThread(ECSManagerAsync& in_owner)
+			WorkerThread(ECSManagerAsync& in_owner LOG_PARAM(const char* in_worker_name))
 				: owner(in_owner)
 				, thread()
+				LOG_PARAM(worker_name(in_worker_name))
 			{}
 
 			bool IsRunning() const
@@ -82,11 +85,13 @@ namespace ECS
 				{
 					{
 						std::lock_guard<std::mutex> guard(owner.mutex);
+						LOG(ScopeDurationLog sdl("ECS '%s' FindTaskToExecute took %lld us \n", worker_name);)
 						task = owner.FindTaskToExecute_Unguarded();
 					}
 
 					if (task.has_value())
 					{
+						LOG(printf_s("ECS worker '%s' found task '%s'\n", worker_name, task->task_name);)
 						task->func();
 						{
 							std::lock_guard<std::mutex> guard(owner.mutex);
@@ -95,6 +100,7 @@ namespace ECS
 					}
 					else
 					{
+						LOG(printf_s("ECS worker '%s' found no task\n", worker_name);)
 						std::unique_lock<std::mutex> guard(owner.new_task_mutex);
 						if (runs)
 						{
@@ -115,37 +121,35 @@ namespace ECS
 
 		std::optional<Task> FindTaskToExecute_Unguarded()
 		{
-			if (!pending_tasks.empty())
+			if (pending_tasks.empty())
+				return {};
+			ExecutionStreamId::Mask unusable_streams;
+			ComponentCache currently_read_only_components;
+			ComponentCache currently_mutable_components;
+			for (auto& t : wt)
 			{
-				ExecutionStreamId::Mask unusable_streams;
-				ComponentCache currently_read_only_components;
-				ComponentCache currently_mutable_components;
-				for (auto& t : wt)
+				if (!t.task.has_value())
+					continue;
+				Task& task = *t.task;
+				task.preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
+				currently_read_only_components |= task.read_only_components;
+				currently_mutable_components |= task.mutable_components;
+			}
+			for (auto it = pending_tasks.begin(); it != pending_tasks.end(); it++)
+			{
+				const bool ok_stream = !it->preserve_order_in_execution_stream.Test(unusable_streams);
+				const bool ok_components = !Details::any_common_bit(it->mutable_components, currently_read_only_components)
+					&& !Details::any_common_bit(it->read_only_components, currently_mutable_components)
+					&& !Details::any_common_bit(it->mutable_components, currently_mutable_components);
+				if (ok_stream && ok_components)
 				{
-					if (t.task.has_value())
-					{
-						Task& task = *t.task;
-						task.preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
-						currently_read_only_components |= task.read_only_components;
-						currently_mutable_components |= task.mutable_components;
-					}
+					std::optional<Task> result(std::move(*it));
+					pending_tasks.erase(it);
+					return result;
 				}
-				for (auto it = pending_tasks.begin(); it != pending_tasks.end(); it++)
+				if (ok_stream && it->preserve_order_in_execution_stream.IsValid())
 				{
-					const bool ok_stream = !it->preserve_order_in_execution_stream.Test(unusable_streams);
-					const bool ok_components = !Details::any_common_bit(it->mutable_components, currently_read_only_components)
-						&& !Details::any_common_bit(it->read_only_components, currently_mutable_components)
-						&& !Details::any_common_bit(it->mutable_components, currently_mutable_components);
-					if (ok_stream && ok_components)
-					{
-						std::optional<Task> result(std::move(*it));
-						pending_tasks.erase(it);
-						return result;
-					}
-					if (ok_stream && it->preserve_order_in_execution_stream.IsValid())
-					{
-						it->preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
-					}
+					it->preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
 				}
 			}
 			return {};
@@ -153,7 +157,7 @@ namespace ECS
 	public:
 		ECSManagerAsync()
 			: ECSManager()
-			, wt{ { *this }, { *this }, { *this }, { *this } }
+			, wt{ { *this LOG_PARAM("wt0") }, { *this LOG_PARAM("wt1") }, { *this LOG_PARAM("wt2") }, { *this LOG_PARAM("wt3") } }
 		{}
 
 		void StartThreads() 
@@ -195,7 +199,9 @@ namespace ECS
 		}
 
 		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
-		std::future<void> CallAsync(const std::function<void(EntityId, TDecoratedComps...)>& func, ExecutionStreamId preserve_order_in_execution_stream = {})
+		std::future<void> CallAsync(const std::function<void(EntityId, TDecoratedComps...)>& func
+			, ExecutionStreamId preserve_order_in_execution_stream = {}
+			LOG_PARAM(const char* task_name = nullptr))
 		{
 			assert(debug_lock);
 			//We can ignore filter in the following masks:
@@ -203,13 +209,14 @@ namespace ECS
 			constexpr ComponentCache mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
 			static_assert((read_only_components & mutable_components).none(), "");
 
-			InnerTask task([this, func]() { Call<TFilter>(func); });
+			InnerTask task([this, func LOG_PARAM(task_name)]() { Call<TFilter>(func LOG_PARAM(task_name)); });
 			auto future = task.get_future();
 
 			{
 				std::lock_guard<std::mutex> guard(mutex);
-				pending_tasks.push_back(Task{ std::move(task), read_only_components, mutable_components, preserve_order_in_execution_stream });
+				pending_tasks.push_back(Task{ std::move(task), read_only_components, mutable_components, preserve_order_in_execution_stream LOG_PARAM(task_name) });
 			}
+			LOG(printf_s("ECS new async task: '%s'\n", task_name);)
 
 			new_task_cv.notify_one();
 

@@ -235,7 +235,7 @@ void Test_2()
 			assert(t1.id == id);
 			counter++;
 		});
-		ecs.Call(test_lambda);
+		ecs.Call(test_lambda LOG_PARAM("sync test_lambda n"));
 		assert(counter == 8);
 	}
 }
@@ -278,7 +278,7 @@ void Test_3()
 			std::this_thread::sleep_for(std::chrono::microseconds(1000));
 			counter1++;
 		});
-		auto future1 = ecs.CallAsync(test_lambda1, 1);
+		auto future1 = ecs.CallAsync(test_lambda1, 1 LOG_PARAM("test_lambda1"));
 
 		int counter2 = 0;
 		auto test_lambda2 = ToFunc([&](EntityId id, TestComponent2& t2, TestComponent3& t3)
@@ -288,7 +288,7 @@ void Test_3()
 			std::this_thread::sleep_for(std::chrono::microseconds(1000));
 			counter2++;
 		});
-		auto future2 = ecs.CallAsync(test_lambda2, 2);
+		auto future2 = ecs.CallAsync(test_lambda2, 2 LOG_PARAM("test_lambda2"));
 
 
 		future1.get();

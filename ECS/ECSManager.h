@@ -258,9 +258,11 @@ namespace ECS
 			}
 		}
 
-		template<typename TFilter = typename Filter<>, typename... TDecoratedComps> void Call(const std::function<void(EntityId, TDecoratedComps...)>& Func)
+		template<typename TFilter = typename Filter<>, typename... TDecoratedComps> 
+		void Call(const std::function<void(EntityId, TDecoratedComps...)>& Func LOG_PARAM(const char* task_name = nullptr))
 		{
 			assert(debug_lock);
+			LOG(ScopeDurationLog sdl("ECS done '%s' duration: %lld us \n", task_name);)
 			using TFunc = typename std::function<void(EntityId, TDecoratedComps...)>;
 			using Head = typename Details::Split<TDecoratedComps...>::Head;
 			using HeadContainer = typename Details::RemoveDecorators<Head>::type::Container;
