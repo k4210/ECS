@@ -20,7 +20,7 @@ namespace ECS
 		{
 		private:
 			ComponentCache components_cache;
-
+			EntityHandle::TGeneration generation = -1;
 		public:
 			constexpr bool IsEmpty() const { return components_cache.none(); }
 			constexpr bool PassFilter(const ComponentCache& filter) const
@@ -41,6 +41,9 @@ namespace ECS
 				assert(components_cache[TComponent::kComponentTypeIdx] != value);
 				components_cache[TComponent::kComponentTypeIdx] = value;
 			}
+
+			EntityHandle::TGeneration GetGeneration() const { return generation; }
+			EntityHandle::TGeneration NewGeneration() { generation++; return generation;}
 		};
 
 		struct EntityContainer
@@ -60,13 +63,20 @@ namespace ECS
 				return (id.IsValid() && !free_entities.test(id.index)) ? &entities_space[id.index] : nullptr;
 			}
 
+			const Entity* Get(EntityHandle handle) const
+			{
+				return (handle.IsValid() && !free_entities.test(handle.id.index) 
+					&& (handle.generation == entities_space[handle.id.index].GetGeneration()))
+					? &entities_space[handle.id.index] : nullptr;
+			}
+
 			Entity& GetChecked(EntityId id)
 			{
 				assert(id.IsValid() && !free_entities.test(id.index));
 				return entities_space[id.index];
 			}
 
-			EntityId Add(unsigned int min_position)
+			EntityHandle Add(unsigned int min_position)
 			{
 				std::size_t first_zero_idx = (0 == min_position) 
 					? free_entities.find_first()
@@ -77,9 +87,10 @@ namespace ECS
 					free_entities[first_zero_idx] = false;
 					assert(entities_space[first_zero_idx].IsEmpty());
 					cached_number++;
-					return EntityId(static_cast<EntityId::TIndex>(first_zero_idx));
+					return EntityHandle{ static_cast<EntityId::TIndex>(first_zero_idx)
+						, entities_space[first_zero_idx].NewGeneration() };
 				}
-				return EntityId();
+				return EntityHandle();
 			}
 
 			void Remove(EntityId id)
@@ -162,9 +173,20 @@ namespace ECS
 			}
 		}
 
+		void RemoveEntity(EntityId id)
+		{
+			RecursiveRemoveComponent<kActuallyImplementedComponents - 1>(id, entities.GetChecked(id));
+			entities.Remove(id);
+		}
+
 	public:
+#ifndef NDEBUG
+		bool debug_lock = false;
+#endif
+
 		void Reset()
 		{
+			assert(!debug_lock);
 			for (EntityId::TIndex i = 0; i < kMaxEntityNum; i++)
 			{
 				if (entities.Get(i))
@@ -178,22 +200,29 @@ namespace ECS
 			Reset();
 		}
 
-		EntityId AddEntity(unsigned int MinPosition = 0)
+		EntityHandle AddEntity(unsigned int MinPosition = 0)
 		{
+			assert(!debug_lock);
 			return entities.Add(MinPosition);
 		}
-		void RemoveEntity(EntityId id)
+		void RemoveEntity(EntityHandle entity_handle)
 		{
-			RecursiveRemoveComponent<kActuallyImplementedComponents - 1>(id, entities.GetChecked(id));
-			entities.Remove(id);
+			assert(!debug_lock);
+			assert(IsValidEntity(entity_handle));
+			RemoveEntity(entity_handle.id);
 		}
 		int GetNumEntities() const
 		{
 			return entities.GetNumEntities();
 		}
-		bool IsValidEntity(EntityId id) const
+		bool IsValidEntity(EntityHandle entity_handle) const
 		{
-			return nullptr != entities.Get(id);
+			return nullptr != entities.Get(entity_handle);
+		}
+		EntityHandle GetHandle(EntityId id) const
+		{
+			const Entity* ptr = entities.Get(id);
+			return ptr ? EntityHandle{id, ptr->GetGeneration()} : EntityHandle{};
 		}
 
 		template<typename TComponent> bool HasComponent(EntityId id) const
@@ -208,17 +237,20 @@ namespace ECS
 		}
 		template<typename TComponent> TComponent& AddComponent(EntityId id)
 		{
+			assert(!debug_lock);
 			static_assert(!TComponent::kIsEmpty, "cannot add an empty component");
 			entities.GetChecked(id).Set<TComponent>(true);
 			return TComponent::GetContainer().Add(id);
 		}
 		template<typename TComponent> void AddEmptyComponent(EntityId id)
 		{
+			assert(!debug_lock);
 			static_assert(TComponent::kIsEmpty, "cannot add an empty component");
 			entities.GetChecked(id).Set<TComponent>(true);
 		}
 		template<typename TComponent> void RemoveComponent(EntityId id)
 		{
+			assert(!debug_lock);
 			entities.GetChecked(id).Set<TComponent>(false);
 			if constexpr(!TComponent::kIsEmpty)
 			{
@@ -228,6 +260,7 @@ namespace ECS
 
 		template<typename TFilter = typename Filter<>, typename... TDecoratedComps> void Call(const std::function<void(EntityId, TDecoratedComps...)>& Func)
 		{
+			assert(debug_lock);
 			using TFunc = typename std::function<void(EntityId, TDecoratedComps...)>;
 			using Head = typename Details::Split<TDecoratedComps...>::Head;
 			using HeadContainer = typename Details::RemoveDecorators<Head>::type::Container;

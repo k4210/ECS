@@ -50,19 +50,33 @@ IMPLEMENT_EMPTY_COMPONENT(EmptyComponent0);
 
 ECSManagerAsync ecs;
 
+struct DebugLockScope
+{
+#ifndef NDEBUG
+	DebugLockScope()
+	{
+		assert(!ecs.debug_lock);
+		ecs.debug_lock = true;
+	}
+	~DebugLockScope()
+	{
+		assert(ecs.debug_lock);
+		ecs.debug_lock = false;
+	}
+#endif
+};
+
 void Test_0()
 {
-	assert(!ecs.IsValidEntity(0));
 	assert(0 == ecs.GetNumEntities());
-	const EntityId id0 = ecs.AddEntity();
+	const EntityHandle id0 = ecs.AddEntity();
 	assert(id0.IsValid());
-	assert(0 == id0.index);//
+	assert(0 == id0.id.index);//
 	assert(ecs.IsValidEntity(id0));
 	assert(1 == ecs.GetNumEntities());
-	assert(!ecs.IsValidEntity(1));//
-	const EntityId id1 = ecs.AddEntity(100);
+	const EntityHandle id1 = ecs.AddEntity(100);
 	assert(id1.IsValid());
-	assert(100 == id1.index);//
+	assert(100 == id1.id.index);//
 	assert(ecs.IsValidEntity(id1));
 	assert(2 == ecs.GetNumEntities());
 	assert(ecs.IsValidEntity(id1));
@@ -73,11 +87,15 @@ void Test_0()
 	ecs.RemoveEntity(id0);
 	assert(!ecs.IsValidEntity(id0));
 	assert(0 == ecs.GetNumEntities());
+
+	const EntityHandle id01 = ecs.AddEntity();
+	assert(ecs.IsValidEntity(id01));
 }
 
 void Test_1()
 {
-	const EntityId id = ecs.AddEntity();
+	const EntityHandle handle = ecs.AddEntity();
+	const EntityId id = handle.id;
 	assert(!ecs.HasComponent<TestComponent0>(id));
 	assert(!ecs.HasComponent<TestComponent1>(id));
 	assert(!ecs.HasComponent<TestComponent2>(id));
@@ -97,7 +115,8 @@ void Test_1()
 	assert(ecs.HasComponent<TestComponent2>(id));
 	assert(ecs.HasComponent<TestComponent3>(id));
 
-	const EntityId id1 = ecs.AddEntity();
+	const EntityHandle handle1 = ecs.AddEntity();
+	const EntityId id1 = handle1.id;
 	assert(!ecs.HasComponent<TestComponent0>(id1));
 	assert(!ecs.HasComponent<TestComponent1>(id1));
 	assert(!ecs.HasComponent<TestComponent2>(id1));
@@ -141,7 +160,7 @@ void Test_2()
 {
 	for (int i = 0; i < 16; i++)
 	{
-		const EntityId id = ecs.AddEntity(64);
+		const EntityHandle id = ecs.AddEntity(64);
 		if (0 != (i & 1))
 		{
 			ecs.AddComponent<TestComponent0>(id).id = id;
@@ -161,6 +180,7 @@ void Test_2()
 		}
 	}
 
+	DebugLockScope dls;
 	{
 		int counter = 0;
 		ecs.Call<Filter<EmptyComponent0>>(ToFunc([&](EntityId id, const TestComponent0* t0, const TestComponent1* t1)
@@ -248,9 +268,10 @@ void Test_3()
 		}
 	}
 
+	DebugLockScope dls;
 	{
 		int counter1 = 0;
-		auto test_lambda1 = ToFunc([&](EntityId id, TestComponent0& t0, TestComponent1& t1, TestComponent2* t2, TestComponent3* t3)
+		auto test_lambda1 = ToFunc([&](EntityId id, TestComponent0& t0, TestComponent1& t1)
 		{
 			assert(t0.id == id);
 			assert(t1.id == id);
@@ -260,10 +281,10 @@ void Test_3()
 		auto future1 = ecs.CallAsync(test_lambda1, 1);
 
 		int counter2 = 0;
-		auto test_lambda2 = ToFunc([&](EntityId id, TestComponent0& t0, TestComponent1& t1, TestComponent2* t2, TestComponent3* t3)
+		auto test_lambda2 = ToFunc([&](EntityId id, TestComponent2& t2, TestComponent3& t3)
 		{
-			assert(t0.id == id);
-			assert(t1.id == id);
+			assert(t2.id == id);
+			assert(t3.id == id);
 			std::this_thread::sleep_for(std::chrono::microseconds(1000));
 			counter2++;
 		});

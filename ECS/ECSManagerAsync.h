@@ -58,16 +58,6 @@ namespace ECS
 
 		class WorkerThread
 		{
-			void ActiveSleep()
-			{
-				const std::chrono::microseconds sleep_time(50);
-				const auto start = std::chrono::high_resolution_clock::now();
-				const auto end = start + sleep_time;
-				do
-				{
-					std::this_thread::yield();
-				} while (std::chrono::high_resolution_clock::now() < end);
-			}
 		public:
 			ECSManagerAsync& owner;
 			std::thread thread;
@@ -78,20 +68,6 @@ namespace ECS
 				: owner(in_owner)
 				, thread()
 			{}
-
-			void Start()
-			{
-				assert(!IsRunning());
-				runs = true;
-				thread = std::thread(&WorkerThread::Loop, this);
-			}
-
-			void Stop()
-			{
-				assert(IsRunning());
-				runs = false;
-				thread.join();
-			}
 
 			bool IsRunning() const
 			{
@@ -119,7 +95,11 @@ namespace ECS
 					}
 					else
 					{
-						ActiveSleep();
+						std::unique_lock<std::mutex> guard(owner.new_task_mutex);
+						if (runs)
+						{
+							owner.new_task_cv.wait(guard);
+						}
 					}
 				}
 			}
@@ -129,6 +109,9 @@ namespace ECS
 		std::deque<Task> pending_tasks;
 		std::mutex mutex;
 		WorkerThread wt[kMaxConcurrentWorkerThreads];
+
+		std::condition_variable new_task_cv;
+		std::mutex new_task_mutex;
 
 		std::optional<Task> FindTaskToExecute_Unguarded()
 		{
@@ -177,14 +160,25 @@ namespace ECS
 		{
 			for (auto& t : wt)
 			{
-				t.Start();
+				assert(!t.IsRunning());
+				t.runs = true;
+				t.thread = std::thread(&WorkerThread::Loop, &t);
 			}
 		}
 		void StopThreads() 
 		{
 			for (auto& t : wt)
 			{
-				t.Stop();
+				assert(t.IsRunning());
+				t.runs = false;
+			}
+			{
+				std::unique_lock<std::mutex> guard(new_task_mutex);
+				new_task_cv.notify_all();
+			}
+			for (auto& t : wt)
+			{
+				t.thread.join();
 			}
 		}
 		bool AnyWorkerIsBusy()
@@ -203,18 +197,21 @@ namespace ECS
 		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
 		std::future<void> CallAsync(const std::function<void(EntityId, TDecoratedComps...)>& func, ExecutionStreamId preserve_order_in_execution_stream = {})
 		{
+			assert(debug_lock);
 			//We can ignore filter in the following masks:
 			constexpr ComponentCache read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst>::Build<TDecoratedComps...>();
 			constexpr ComponentCache mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
 			static_assert((read_only_components & mutable_components).none(), "");
 
-			InnerTask task([this, func]() { Call(func); });
+			InnerTask task([this, func]() { Call<TFilter>(func); });
 			auto future = task.get_future();
 
 			{
 				std::lock_guard<std::mutex> guard(mutex);
 				pending_tasks.push_back(Task{ std::move(task), read_only_components, mutable_components, preserve_order_in_execution_stream });
 			}
+
+			new_task_cv.notify_one();
 
 			return future;
 		}

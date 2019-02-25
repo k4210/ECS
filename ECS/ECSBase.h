@@ -31,9 +31,25 @@ namespace ECS
 		{
 			assert(IsValid());
 		}
-		constexpr bool operator==(const EntityId& Other) const
+		constexpr bool operator==(const EntityId& other) const
 		{
-			return index == Other.index;
+			return index == other.index;
+		}
+	};
+
+	struct EntityHandle
+	{
+		using TGeneration = int;
+		EntityId id;
+		TGeneration generation = -1;
+
+		bool IsValid() const { return id.IsValid() && (generation >= 0); }
+
+		operator EntityId() const { return id; }
+
+		bool operator==(const EntityHandle& other) const
+		{
+			return (id == other.id) && (generation == other.generation);
 		}
 	};
 

@@ -119,6 +119,7 @@
   <ItemGroup>
     <ClInclude Include="ECSBase.h" />
     <ClInclude Include="ECSContainer.h" />
+    <ClInclude Include="ECSEvent.h" />
     <ClInclude Include="ECSManager.h" />
     <ClInclude Include="ECSManagerAsync.h" />
   </ItemGroup>
