@@ -125,6 +125,10 @@ namespace ECS
 		};
 
 		EntityContainer entities;
+#ifndef NDEBUG
+		bool debug_lock = false;
+		friend struct DebugLockScope;
+#endif
 
 		template<int I> static void RecursiveRemoveComponent(EntityId id, Entity& entity)
 		{
@@ -138,8 +142,11 @@ namespace ECS
 			}
 		}
 
-		template<typename TFilter, typename... TDecoratedComps> void CallNoHint(const std::function<void(EntityId, TDecoratedComps...)>& Func)
+		template<typename TFilter, typename... TDecoratedComps> 
+		void CallNoHint(const std::function<void(EntityId, TDecoratedComps...)>& Func LOG_PARAM(const char* task_name))
 		{
+			LOG(ScopeDurationLogAccumulative __sdla("ECS pure '%s' duration: %lld us (hint)\n", task_name);)
+			LOG(ScopeDurationLog sdl("ECS done '%s' duration: %lld us (hint)\n", task_name);)
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
@@ -150,13 +157,17 @@ namespace ECS
 			for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValid()
 				; id = entities.GetNext(id, filter, already_tested))
 			{
+				LOG(ScopeDurationLogAccumulative::AccumulationScope __as(__sdla);)
 				using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
 				Func(id, Details::Unbox<TDecoratedComps, IndexOfParam::Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
 			}
 		}
 
-		template<typename TFilter, typename TComp, typename... TDecoratedComps> void CallHint(const std::function<void(EntityId, TComp, TDecoratedComps...)>& Func)
+		template<typename TFilter, typename TComp, typename... TDecoratedComps> 
+		void CallHint(const std::function<void(EntityId, TComp, TDecoratedComps...)>& Func LOG_PARAM(const char* task_name))
 		{
+			LOG(ScopeDurationLogAccumulative __sdla("ECS pure '%s' duration: %lld us \n", task_name);)
+			LOG(ScopeDurationLog sdl("ECS done '%s' duration: %lld us \n", task_name);)
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
@@ -167,6 +178,7 @@ namespace ECS
 				const EntityId id(it.first);
 				if (entities.GetChecked(id).PassFilter(filter))
 				{
+					LOG(ScopeDurationLogAccumulative::AccumulationScope __as(__sdla);)
 					using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
 					Func(id, it.second, Details::Unbox<TDecoratedComps, IndexOfParam::Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
 				}
@@ -180,9 +192,6 @@ namespace ECS
 		}
 
 	public:
-#ifndef NDEBUG
-		bool debug_lock = false;
-#endif
 
 		void Reset()
 		{
@@ -262,18 +271,38 @@ namespace ECS
 		void Call(const std::function<void(EntityId, TDecoratedComps...)>& Func LOG_PARAM(const char* task_name = nullptr))
 		{
 			assert(debug_lock);
-			LOG(ScopeDurationLog sdl("ECS done '%s' duration: %lld us \n", task_name);)
 			using TFunc = typename std::function<void(EntityId, TDecoratedComps...)>;
 			using Head = typename Details::Split<TDecoratedComps...>::Head;
 			using HeadContainer = typename Details::RemoveDecorators<Head>::type::Container;
 			if constexpr(HeadContainer::kUseAsFilter && !std::is_pointer_v<Head>)
 			{
-				CallHint<TFilter, TDecoratedComps...>(Func);
+				CallHint<TFilter, TDecoratedComps...>(Func LOG_PARAM(task_name));
 			}
 			else
 			{
-				CallNoHint<TFilter, TDecoratedComps...>(Func);
+				CallNoHint<TFilter, TDecoratedComps...>(Func LOG_PARAM(task_name));
 			}
 		}
+	};
+
+	struct DebugLockScope
+	{
+#ifdef NDEBUG
+		DebugLockScope(ECSManager&) {}
+#else
+		DebugLockScope(ECSManager& in_ecs)
+			: ecs(in_ecs)
+		{
+			assert(!ecs.debug_lock);
+			ecs.debug_lock = true;
+		}
+		~DebugLockScope()
+		{
+			assert(ecs.debug_lock);
+			ecs.debug_lock = false;
+		}
+	private:
+		ECSManager & ecs;
+#endif
 	};
 }

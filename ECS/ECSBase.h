@@ -12,6 +12,7 @@
 #define IMPLEMENT_EMPTY_COMPONENT(COMP) template<> void ECS::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId) { }
 
 #define ECS_LOG_ENABLED 1
+
 #if ECS_LOG_ENABLED
 #define LOG(x) x
 #define LOG_PARAM(x) , x
@@ -29,12 +30,38 @@ namespace ECS
 		const char* format = nullptr;
 		const char* name = nullptr;
 	public:
-		ScopeDurationLog(const char* in_format, const char* in_name)
+		ScopeDurationLog(const char* in_format, const char* in_name = "")
 			: start(std::chrono::system_clock::now())
 			, format(in_format), name(in_name) {}
 		~ScopeDurationLog()
 		{
 			const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start);
+			printf(format, name, duration_us.count());
+		}
+	};
+
+	struct ScopeDurationLogAccumulative
+	{
+	private:
+		std::chrono::microseconds duration_us;
+		const char* format = nullptr;
+		const char* name = nullptr;
+	public:
+		struct AccumulationScope
+		{
+			ScopeDurationLogAccumulative& owner;
+			std::chrono::time_point<std::chrono::system_clock> start;
+			AccumulationScope(ScopeDurationLogAccumulative& in_owner) 
+				: owner(in_owner), start(std::chrono::system_clock::now()) {}
+			~AccumulationScope() 
+			{ 
+				owner.duration_us += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start);
+			}
+		};
+		ScopeDurationLogAccumulative(const char* in_format, const char* in_name = "")
+			: duration_us(0), format(in_format), name(in_name) {}
+		~ScopeDurationLogAccumulative()
+		{
 			printf(format, name, duration_us.count());
 		}
 	};

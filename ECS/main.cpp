@@ -50,22 +50,6 @@ IMPLEMENT_EMPTY_COMPONENT(EmptyComponent0);
 
 ECSManagerAsync ecs;
 
-struct DebugLockScope
-{
-#ifndef NDEBUG
-	DebugLockScope()
-	{
-		assert(!ecs.debug_lock);
-		ecs.debug_lock = true;
-	}
-	~DebugLockScope()
-	{
-		assert(ecs.debug_lock);
-		ecs.debug_lock = false;
-	}
-#endif
-};
-
 void Test_0()
 {
 	assert(0 == ecs.GetNumEntities());
@@ -180,7 +164,7 @@ void Test_2()
 		}
 	}
 
-	DebugLockScope dls;
+	DebugLockScope dls(ecs);
 	{
 		int counter = 0;
 		ecs.Call<Filter<EmptyComponent0>>(ToFunc([&](EntityId id, const TestComponent0* t0, const TestComponent1* t1)
@@ -268,7 +252,7 @@ void Test_3()
 		}
 	}
 
-	DebugLockScope dls;
+	DebugLockScope dls(ecs);
 	{
 		int counter1 = 0;
 		auto test_lambda1 = ToFunc([&](EntityId id, TestComponent0& t0, TestComponent1& t1)

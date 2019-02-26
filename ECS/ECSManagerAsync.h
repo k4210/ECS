@@ -15,6 +15,7 @@ namespace ECS
 		using Mask = Bitset2::bitset2<kMaxExecutionStream>;
 	private:
 		int index = -1;
+		friend class ECSManagerAsync;
 
 	public:
 		ExecutionStreamId() = default;
@@ -45,9 +46,8 @@ namespace ECS
 
 	class ECSManagerAsync : public ECSManager
 	{
-	public:
-		using InnerTask = std::packaged_task<void()>;
 	protected:
+		using InnerTask = std::packaged_task<void()>;
 		struct Task
 		{
 			InnerTask func;
@@ -59,18 +59,23 @@ namespace ECS
 
 		class WorkerThread
 		{
+			std::optional<Task> task;
 		public:
 			ECSManagerAsync& owner;
 			std::thread thread;
-			std::optional<Task> task;
 			std::atomic_bool runs = false;
-			LOG(const char* worker_name = nullptr;)
+			LOG(const char* const worker_name = nullptr;)
 
 			WorkerThread(ECSManagerAsync& in_owner LOG_PARAM(const char* in_worker_name))
 				: owner(in_owner)
 				, thread()
 				LOG_PARAM(worker_name(in_worker_name))
 			{}
+
+			const Task* GetTask_Unsafe() const
+			{
+				return task.has_value() ? &(*task) : nullptr;
+			}
 
 			bool IsRunning() const
 			{
@@ -85,13 +90,13 @@ namespace ECS
 				{
 					{
 						std::lock_guard<std::mutex> guard(owner.mutex);
-						LOG(ScopeDurationLog sdl("ECS '%s' FindTaskToExecute took %lld us \n", worker_name);)
 						task = owner.FindTaskToExecute_Unguarded();
 					}
 
 					if (task.has_value())
 					{
-						LOG(printf_s("ECS worker '%s' found task '%s'\n", worker_name, task->task_name);)
+						LOG(printf_s("ECS worker '%s' found '%s' stream: %d \n"
+							, worker_name, task->task_name, task->preserve_order_in_execution_stream.index);)
 						task->func();
 						{
 							std::lock_guard<std::mutex> guard(owner.mutex);
@@ -123,17 +128,18 @@ namespace ECS
 		{
 			if (pending_tasks.empty())
 				return {};
+			LOG(ScopeDurationLog sdl("ECS %s in %lld us \n", "found task");)
 			ExecutionStreamId::Mask unusable_streams;
 			ComponentCache currently_read_only_components;
 			ComponentCache currently_mutable_components;
 			for (auto& t : wt)
 			{
-				if (!t.task.has_value())
+				const Task* task = t.GetTask_Unsafe();
+				if (!task)
 					continue;
-				Task& task = *t.task;
-				task.preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
-				currently_read_only_components |= task.read_only_components;
-				currently_mutable_components |= task.mutable_components;
+				task->preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
+				currently_read_only_components |= task->read_only_components;
+				currently_mutable_components |= task->mutable_components;
 			}
 			for (auto it = pending_tasks.begin(); it != pending_tasks.end(); it++)
 			{
@@ -190,10 +196,8 @@ namespace ECS
 			std::lock_guard<std::mutex> guard(mutex);
 			for (auto& t : wt)
 			{
-				if (t.task.has_value())
-				{
+				if (t.GetTask_Unsafe())
 					return true;
-				}
 			}
 			return false;
 		}
