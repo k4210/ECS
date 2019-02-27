@@ -3,6 +3,11 @@
 
 SResources* SResources::inst = nullptr;
 
+
+//TODO: Frame time
+//Render Thread
+//
+
 int main()
 {
 	SResources::inst = new SResources{};
@@ -21,7 +26,6 @@ int main()
 			inst.ecs.AddComponent<Velocity>(e).velocity = sf::Vector2f(sinf(angle), cosf(angle));
 		}
 
-		std::vector<std::future<void>> blocking_tasks;
 		inst.ecs.StartThreads();
 		while (inst.window.isOpen())
 		{
@@ -35,16 +39,21 @@ int main()
 			inst.window.clear();
 			{
 				ECS::DebugLockScope __dls(inst.ecs);
-				blocking_tasks.emplace_back(inst.movement_system.Update());
-				blocking_tasks.emplace_back(inst.graphic_system.Update());
-
-				for (auto& ft : blocking_tasks)
+				auto graphic_update_complete = inst.graphic_system.Update();
+				inst.movement_system.Update();
+				
+				while (std::future_status::ready != graphic_update_complete.wait_for(std::chrono::microseconds(0)))
 				{
-					ft.wait();
+					inst.ecs.WorkFromMainThread(true);
 				}
-				blocking_tasks.resize(0);
-
+				
 				inst.graphic_system.RenderSync();
+
+				while (inst.ecs.AnyWorkerIsBusy())
+				{
+					inst.ecs.WorkFromMainThread(false);
+					std::this_thread::yield();
+				}
 			}
 			{
 				LOG(ECS::ScopeDurationLog __sdl("Display time%s %lld us \n");)

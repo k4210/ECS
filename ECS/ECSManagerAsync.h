@@ -124,6 +124,8 @@ namespace ECS
 		std::condition_variable new_task_cv;
 		std::mutex new_task_mutex;
 
+		std::optional<Task> main_thread_task;
+
 		std::optional<Task> FindTaskToExecute_Unguarded()
 		{
 			if (pending_tasks.empty())
@@ -132,14 +134,22 @@ namespace ECS
 			ExecutionStreamId::Mask unusable_streams;
 			ComponentCache currently_read_only_components;
 			ComponentCache currently_mutable_components;
+			auto tasks_dependencies = [&](const Task& task)
+			{
+				task.preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
+				currently_read_only_components |= task.read_only_components;
+				currently_mutable_components |= task.mutable_components;
+			};
 			for (auto& t : wt)
 			{
 				const Task* task = t.GetTask_Unsafe();
 				if (!task)
 					continue;
-				task->preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
-				currently_read_only_components |= task->read_only_components;
-				currently_mutable_components |= task->mutable_components;
+				tasks_dependencies(*task);
+			}
+			if (main_thread_task.has_value())
+			{
+				tasks_dependencies(*main_thread_task);
 			}
 			for (auto it = pending_tasks.begin(); it != pending_tasks.end(); it++)
 			{
@@ -201,6 +211,37 @@ namespace ECS
 			}
 			return false;
 		}
+		bool WorkFromMainThread(bool bSingleJob)
+		{
+			assert(!main_thread_task.has_value());
+			bool result = false;
+			do
+			{
+				{
+					std::lock_guard<std::mutex> guard(mutex);
+					main_thread_task = FindTaskToExecute_Unguarded();
+				}
+
+				if (main_thread_task.has_value())
+				{
+					LOG(printf_s("ECS main thread found '%s' stream: %d \n"
+						, main_thread_task->task_name, main_thread_task->preserve_order_in_execution_stream.index);)
+					main_thread_task->func();
+					{
+						std::lock_guard<std::mutex> guard(mutex);
+						main_thread_task = {};
+					}
+					result = true;
+				}
+				else
+				{
+					LOG(printf_s("ECS main thread found no task\n");)
+					break;
+				}
+			}
+			while(!bSingleJob);
+			return result;
+		}
 
 		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
 		std::future<void> CallAsync(const std::function<void(EntityId, TDecoratedComps...)>& func
@@ -226,5 +267,7 @@ namespace ECS
 
 			return future;
 		}
+
+
 	};
 }

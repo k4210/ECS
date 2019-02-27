@@ -43,6 +43,7 @@ namespace ECS
 	struct ScopeDurationLogAccumulative
 	{
 	private:
+		std::chrono::time_point<std::chrono::system_clock> start;
 		std::chrono::microseconds duration_us;
 		const char* format = nullptr;
 		const char* name = nullptr;
@@ -59,10 +60,14 @@ namespace ECS
 			}
 		};
 		ScopeDurationLogAccumulative(const char* in_format, const char* in_name = "")
-			: duration_us(0), format(in_format), name(in_name) {}
+			: start(std::chrono::system_clock::now())
+			, duration_us(0)
+			, format(in_format)
+			, name(in_name) {}
 		~ScopeDurationLogAccumulative()
 		{
-			printf(format, name, duration_us.count());
+			const auto duration_whole_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start);
+			printf(format, name, duration_whole_us.count(), duration_us.count());
 		}
 	};
 

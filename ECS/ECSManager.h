@@ -145,8 +145,7 @@ namespace ECS
 		template<typename TFilter, typename... TDecoratedComps> 
 		void CallNoHint(const std::function<void(EntityId, TDecoratedComps...)>& Func LOG_PARAM(const char* task_name))
 		{
-			LOG(ScopeDurationLogAccumulative __sdla("ECS pure '%s' duration: %lld us (hint)\n", task_name);)
-			LOG(ScopeDurationLog sdl("ECS done '%s' duration: %lld us (hint)\n", task_name);)
+			LOG(ScopeDurationLogAccumulative __sdla("ECS done '%s' duration: %lld us pure: %lld (hint)\n", task_name);)
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
@@ -166,8 +165,7 @@ namespace ECS
 		template<typename TFilter, typename TComp, typename... TDecoratedComps> 
 		void CallHint(const std::function<void(EntityId, TComp, TDecoratedComps...)>& Func LOG_PARAM(const char* task_name))
 		{
-			LOG(ScopeDurationLogAccumulative __sdla("ECS pure '%s' duration: %lld us \n", task_name);)
-			LOG(ScopeDurationLog sdl("ECS done '%s' duration: %lld us \n", task_name);)
+			LOG(ScopeDurationLogAccumulative __sdla("ECS done '%s' duration: %lld us pure: %lld\n", task_name);)
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
