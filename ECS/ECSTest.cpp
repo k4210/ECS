@@ -1,10 +1,12 @@
 #include "ECSContainer.h"
 #include "ECSManagerAsync.h"
-#include<iostream>
+#include "ECSEvent.h"
 
 using namespace ECS;
 
+#define RUN_TESTS 0
 
+#if RUN_TESTS
 struct TestComponent0 : public Component<0, DenseComponentContainer<TestComponent0>>
 {
 	EntityId id;
@@ -286,7 +288,7 @@ void Test_3()
 	assert(!ecs.AnyWorkerIsBusy());
 }
 
-int main()
+void TestMain()
 {
 	Test_0();
 	ecs.Reset();
@@ -296,6 +298,13 @@ int main()
 	ecs.Reset();
 	Test_3();
 	ecs.Reset();
-	std::cout << "Tests succedded!...\n";
+	printf_s("Tests succedded...\n");
 	getchar();
 }
+
+int main()
+{
+	TestMain();
+}
+
+#endif

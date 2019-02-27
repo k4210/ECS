@@ -97,7 +97,7 @@ namespace ECS
 			}();
 
 			assert((it != components.end()) && (it->first == id.index));
-			cached_iter = std::distance(components.begin(), it) + 1;
+			cached_iter = static_cast<TCacheIter>(std::distance(components.begin(), it) + 1);
 			return it->second;
 		}
 

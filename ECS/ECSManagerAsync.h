@@ -18,14 +18,14 @@ namespace ECS
 		friend class ECSManagerAsync;
 
 	public:
-		ExecutionStreamId() = default;
-		ExecutionStreamId(int in_idx) 
+		constexpr ExecutionStreamId() = default;
+		constexpr ExecutionStreamId(int in_idx)
 			: index(in_idx) 
 		{
 			assert(IsValid());
 		}
 
-		bool IsValid() const
+		constexpr bool IsValid() const
 		{
 			return (index >= 0) && (index < kMaxExecutionStream);
 		}

@@ -68,7 +68,7 @@ namespace ECS
 
 	static const constexpr int kMaxComponentTypeNum = 256;
 	static const constexpr int kMaxEntityNum = 1024;
-	static const constexpr int kActuallyImplementedComponents = 5;
+	static const constexpr int kActuallyImplementedComponents = 12;
 	static const constexpr int kMaxConcurrentWorkerThreads = 4; //change ECSManagerAsync constructor
 	static const constexpr int kMaxExecutionStream = 64;
 	static_assert(kActuallyImplementedComponents <= kMaxComponentTypeNum, "too many component types");
@@ -93,9 +93,9 @@ namespace ECS
 
 	struct EntityHandle
 	{
-		using TGeneration = int;
-		EntityId id;
+		using TGeneration = int16_t;
 		TGeneration generation = -1;
+		EntityId id;
 
 		bool IsValid() const { return id.IsValid() && (generation >= 0); }
 
@@ -225,7 +225,7 @@ namespace ECS
 		template<bool TIgnorePointers, EComponentFilerOptions TFilerOptions, typename... TComps>
 		constexpr ComponentCache BuildFilter()
 		{
-			return FilterBuilder<TComps...>::Build<TIgnorePointers, TFilerOptions>();
+			return FilterBuilder<TComps...>::template Build<TIgnorePointers, TFilerOptions>();
 		}
 
 		template<bool TIgnorePointers, EComponentFilerOptions TFilerOptions>
@@ -263,7 +263,7 @@ namespace ECS
 				using TComp = typename RemoveDecorators<TDecoratedComp>::type;
 				if (component_cache.test(TComp::kComponentTypeIdx))
 				{
-					return &(Unbox<TDecoratedComp&, TIndex>::Get<TArr>(id, arr, component_cache));
+					return &(Unbox<TDecoratedComp&, TIndex>:: template Get<TArr>(id, arr, component_cache));
 				}
 				return nullptr;
 			}
@@ -277,7 +277,7 @@ namespace ECS
 			{
 				return std::is_same_v<THead, T>
 					? NumCachedIter<typename RemoveDecorators<TTail>::type...>()
-					: IndexOfIterParameterInner<TTail...>::Get<T>();
+					: IndexOfIterParameterInner<TTail...>::template Get<T>();
 			}
 		};
 
@@ -299,7 +299,7 @@ namespace ECS
 			{
 				if constexpr(sizeof...(TComps) > 0)
 				{
-					return IndexOfIterParameterInner<TComps...>::Get<T>();
+					return IndexOfIterParameterInner<TComps...>::template Get<T>();
 				}
 				else
 				{

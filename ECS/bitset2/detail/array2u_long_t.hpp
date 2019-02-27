@@ -93,7 +93,7 @@ namespace detail
     constexpr
     base_t
     take_check( array_t const & arr, size_t idx ) const noexcept
-    { return arr[idx] & ( idx + 1 == use_vals ? i_pttrn : allset ); }
+    { return arr[idx] & ( idx + 1 == use_vals ? base_t(~h_pttrn) : allset ); }
 
   }; // struct array2u_long_t
 

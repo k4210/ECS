@@ -5,35 +5,50 @@
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
       <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
     </Filter>
-    <Filter Include="Header Files">
-      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
-      <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
-    </Filter>
     <Filter Include="Resource Files">
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
+    <Filter Include="ECS">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Game">
+      <UniqueIdentifier>{b622b802-8215-4f78-871e-cbc6f38e1f42}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ECSBase.h">
-      <Filter>Header Files</Filter>
+      <Filter>ECS</Filter>
     </ClInclude>
     <ClInclude Include="ECSManager.h">
-      <Filter>Header Files</Filter>
+      <Filter>ECS</Filter>
     </ClInclude>
     <ClInclude Include="ECSContainer.h">
-      <Filter>Header Files</Filter>
+      <Filter>ECS</Filter>
     </ClInclude>
     <ClInclude Include="ECSManagerAsync.h">
-      <Filter>Header Files</Filter>
+      <Filter>ECS</Filter>
     </ClInclude>
     <ClInclude Include="ECSEvent.h">
-      <Filter>Header Files</Filter>
+      <Filter>ECS</Filter>
     </ClInclude>
+    <ClInclude Include="Components.h">
+      <Filter>Game</Filter>
+    </ClInclude>
+    <ClInclude Include="Systems.h">
+      <Filter>Game</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="ECSTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="GameMain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Components.cpp">
+      <Filter>Game</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

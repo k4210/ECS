@@ -87,8 +87,8 @@ namespace ECS
 					free_entities[first_zero_idx] = false;
 					assert(entities_space[first_zero_idx].IsEmpty());
 					cached_number++;
-					return EntityHandle{ static_cast<EntityId::TIndex>(first_zero_idx)
-						, entities_space[first_zero_idx].NewGeneration() };
+					return EntityHandle{ entities_space[first_zero_idx].NewGeneration(),
+						static_cast<EntityId::TIndex>(first_zero_idx) };
 				}
 				return EntityHandle();
 			}
@@ -109,7 +109,7 @@ namespace ECS
 
 			EntityId GetNext(EntityId id, const ComponentCache& pattern, int& already_tested) const
 			{
-				for (int it = id.index + 1; (it < kMaxEntityNum) && (already_tested < cached_number); it++)
+				for (EntityId::TIndex it = id.index + 1; (it < kMaxEntityNum) && (already_tested < cached_number); it++)
 				{
 					if (!free_entities.test(it))
 					{
@@ -159,7 +159,7 @@ namespace ECS
 			{
 				LOG(ScopeDurationLogAccumulative::AccumulationScope __as(__sdla);)
 				using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
-				Func(id, Details::Unbox<TDecoratedComps, IndexOfParam::Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
+				Func(id, Details::Unbox<TDecoratedComps, IndexOfParam::template Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
 			}
 		}
 
@@ -180,7 +180,7 @@ namespace ECS
 				{
 					LOG(ScopeDurationLogAccumulative::AccumulationScope __as(__sdla);)
 					using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
-					Func(id, it.second, Details::Unbox<TDecoratedComps, IndexOfParam::Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
+					Func(id, it.second, Details::Unbox<TDecoratedComps, IndexOfParam::template Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
 				}
 			}
 		}
@@ -231,7 +231,7 @@ namespace ECS
 		EntityHandle GetHandle(EntityId id) const
 		{
 			const Entity* ptr = entities.Get(id);
-			return ptr ? EntityHandle{id, ptr->GetGeneration()} : EntityHandle{};
+			return ptr ? EntityHandle{ ptr->GetGeneration(), id } : EntityHandle{};
 		}
 
 		template<typename TComponent> bool HasComponent(EntityId id) const
