@@ -22,6 +22,12 @@ struct SResources
 	ECS::ECSManagerAsync ecs;
 	GraphicSystem graphic_system;
 	GameMovement movement_system;
+
+	float frame_time_seconds = 0.0f;
+
+	std::promise<std::future<void>> main_thread_triggered_graphic_update; //is this legal ?
+	std::promise<void> render_thread_done_sync;
+
 	static SResources* inst;
 };
 
@@ -30,6 +36,11 @@ struct EStreams
 	constexpr static const ECS::ExecutionStreamId None{};
 	constexpr static const ECS::ExecutionStreamId Graphic{0};
 };
+
+void HandleGameEvents()
+{
+
+}
 
 std::future<void> GraphicSystem::Update()
 {
@@ -44,7 +55,7 @@ std::future<void> GraphicSystem::Update()
 			sprite.shape.setRadius(size.radius);
 		}
 	}), EStreams::Graphic
-		LOG_PARAM("GraphicSystem::Update"));
+	LOG_PARAM("GraphicSystem::Update"));
 }
 void GraphicSystem::RenderSync()
 {
@@ -73,7 +84,7 @@ std::future<void> GameMovement::Update()
 			vel.velocity.y = -vel.velocity.y;
 		}
 
-		pos.pos += vel.velocity * 8.0f;
+		pos.pos += vel.velocity * 100.0f * SResources::inst->frame_time_seconds;
 
 	}), EStreams::None
 		LOG_PARAM("GameMovement::Update"));

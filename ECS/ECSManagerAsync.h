@@ -105,7 +105,7 @@ namespace ECS
 					}
 					else
 					{
-						LOG(printf_s("ECS worker '%s' found no task\n", worker_name);)
+						//LOG(printf_s("ECS worker '%s' found no task\n", worker_name);)
 						std::unique_lock<std::mutex> guard(owner.new_task_mutex);
 						if (runs)
 						{
@@ -130,7 +130,7 @@ namespace ECS
 		{
 			if (pending_tasks.empty())
 				return {};
-			LOG(ScopeDurationLog sdl("ECS %s in %lld us \n", "found task");)
+			//LOG(ScopeDurationLog sdl("ECS %s in %lld us \n", "found task");)
 			ExecutionStreamId::Mask unusable_streams;
 			ComponentCache currently_read_only_components;
 			ComponentCache currently_mutable_components;
@@ -235,7 +235,7 @@ namespace ECS
 				}
 				else
 				{
-					LOG(printf_s("ECS main thread found no task\n");)
+					//LOG(printf_s("ECS main thread found no task\n");)
 					break;
 				}
 			}
