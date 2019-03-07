@@ -1,7 +1,8 @@
 #pragma once
 
 #include "ECSBase.h"
-#include<array>
+#include <array>
+#include <atomic>
 
 namespace ECS
 {
@@ -60,19 +61,24 @@ namespace ECS
 
 			const Entity* Get(EntityId id) const
 			{
-				return (id.IsValid() && !free_entities.test(id.index)) ? &entities_space[id.index] : nullptr;
+				return (id.IsValidForm() && !free_entities.test(id.index)) ? &entities_space[id.index] : nullptr;
+			}
+
+			bool IsHandleValid(EntityHandle handle) const
+			{
+				return handle.IsValidForm() 
+					&& !free_entities.test(handle.id.index)
+					&& (handle.generation == entities_space[handle.id.index].GetGeneration());
 			}
 
 			const Entity* Get(EntityHandle handle) const
 			{
-				return (handle.IsValid() && !free_entities.test(handle.id.index) 
-					&& (handle.generation == entities_space[handle.id.index].GetGeneration()))
-					? &entities_space[handle.id.index] : nullptr;
+				return IsHandleValid(handle) ? &entities_space[handle.id.index] : nullptr;
 			}
 
 			Entity& GetChecked(EntityId id)
 			{
-				assert(id.IsValid() && !free_entities.test(id.index));
+				assert(id.IsValidForm() && !free_entities.test(id.index));
 				return entities_space[id.index];
 			}
 
@@ -93,16 +99,11 @@ namespace ECS
 				return EntityHandle();
 			}
 
-			void Remove(EntityId id)
+			void RemoveChecked(EntityId id)
 			{
-				const bool bProperId = id.IsValid() && !free_entities.test(id.index);
-				assert(bProperId);
-				if (bProperId)
-				{
-					cached_number--;
-					entities_space[id.index].Reset();
-					free_entities.set(id.index, true);
-				}
+				cached_number--;
+				entities_space[id.index].Reset();
+				free_entities.set(id.index, true);
 			}
 
 			int GetNumEntities() const { return cached_number; }
@@ -126,7 +127,7 @@ namespace ECS
 
 		EntityContainer entities;
 #ifndef NDEBUG
-		bool debug_lock = false;
+		std::atomic_bool debug_lock = false;
 		friend struct DebugLockScope;
 #endif
 
@@ -142,32 +143,35 @@ namespace ECS
 			}
 		}
 
-		template<typename TFilter, typename... TDecoratedComps> 
-		void CallNoHint(const std::function<void(EntityId, TDecoratedComps...)>& Func LOG_PARAM(const char* task_name))
+		void RemoveEntity(EntityId id)
 		{
-			LOG(ScopeDurationLogAccumulative __sdla("ECS done '%s' duration: %lld us pure: %lld (hint)\n", task_name);)
+			RecursiveRemoveComponent<kActuallyImplementedComponents - 1>(id, entities.GetChecked(id));
+			entities.RemoveChecked(id);
+		}
+
+		template<typename TFilter, typename... TDecoratedComps>
+		void CallNoHint(void(*func)(EntityId, TDecoratedComps...))
+		{
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
 
-			constexpr ComponentCache filter = TFilter::Get() 
+			constexpr ComponentCache filter = TFilter::Get()
 				| Details::FilterBuilder<true, Details::EComponentFilerOptions::BothMutableAndConst>::Build<TDecoratedComps...>();
 			int already_tested = 0;
 
-			for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValid()
+			for (EntityId id = entities.GetNext({}, filter, already_tested); id.IsValidForm()
 				; id = entities.GetNext(id, filter, already_tested))
 			{
-				LOG(ScopeDurationLogAccumulative::AccumulationScope __as(__sdla);)
 				using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
-				Func(id, Details::Unbox<TDecoratedComps, IndexOfParam::template Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
+				func(id, Details::Unbox<TDecoratedComps, IndexOfParam::template Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
 			}
 		}
 
-		template<typename TFilter, typename TComp, typename... TDecoratedComps> 
-		void CallHint(const std::function<void(EntityId, TComp, TDecoratedComps...)>& Func LOG_PARAM(const char* task_name))
+		template<typename TFilter, typename TComp, typename... TDecoratedComps>
+		void CallHint(void(*func)(EntityId, TDecoratedComps...))
 		{
-			LOG(ScopeDurationLogAccumulative __sdla("ECS done '%s' duration: %lld us pure: %lld\n", task_name);)
 			constexpr auto kArrSize = Details::NumCachedIter<typename Details::RemoveDecorators<TDecoratedComps>::type...>();
-			std::array<TCacheIter, kArrSize> cached_iters; cached_iters.fill(0);
+			std::array<TCacheIter, kArrSize> cached_iters = { 0 };
 
 			constexpr ComponentCache filter = TFilter::Get()
 				| Details::FilterBuilder<true, Details::EComponentFilerOptions::BothMutableAndConst>::Build<TDecoratedComps...>();
@@ -176,17 +180,10 @@ namespace ECS
 				const EntityId id(it.first);
 				if (entities.GetChecked(id).PassFilter(filter))
 				{
-					LOG(ScopeDurationLogAccumulative::AccumulationScope __as(__sdla);)
 					using IndexOfParam = Details::IndexOfIterParameter<TDecoratedComps...>;
-					Func(id, it.second, Details::Unbox<TDecoratedComps, IndexOfParam::template Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
+					func(id, it.second, Details::Unbox<TDecoratedComps, IndexOfParam::template Get<TDecoratedComps>()>::Get(id, cached_iters, filter)...);
 				}
 			}
-		}
-
-		void RemoveEntity(EntityId id)
-		{
-			RecursiveRemoveComponent<kActuallyImplementedComponents - 1>(id, entities.GetChecked(id));
-			entities.Remove(id);
 		}
 
 	public:
@@ -212,11 +209,15 @@ namespace ECS
 			assert(!debug_lock);
 			return entities.Add(MinPosition);
 		}
-		void RemoveEntity(EntityHandle entity_handle)
+		bool RemoveEntity(EntityHandle entity_handle)
 		{
 			assert(!debug_lock);
-			assert(IsValidEntity(entity_handle));
-			RemoveEntity(entity_handle.id);
+			if (entities.IsHandleValid(entity_handle))
+			{
+				RemoveEntity(entity_handle.id);
+				return true;
+			}
+			return false;
 		}
 		int GetNumEntities() const
 		{
@@ -264,21 +265,20 @@ namespace ECS
 				TComponent::GetContainer().Remove(id);
 			}
 		}
-
-		template<typename TFilter = typename Filter<>, typename... TDecoratedComps> 
-		void Call(const std::function<void(EntityId, TDecoratedComps...)>& Func LOG_PARAM(const char* task_name = nullptr))
+		
+		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
+		void Call(void(*func)(EntityId, TDecoratedComps...))
 		{
-			assert(debug_lock);
-			using TFunc = typename std::function<void(EntityId, TDecoratedComps...)>;
+			//assert(debug_lock);
 			using Head = typename Details::Split<TDecoratedComps...>::Head;
 			using HeadContainer = typename Details::RemoveDecorators<Head>::type::Container;
-			if constexpr(HeadContainer::kUseAsFilter && !std::is_pointer_v<Head>)
+			if constexpr (HeadContainer::kUseAsFilter && !std::is_pointer_v<Head>)
 			{
-				CallHint<TFilter, TDecoratedComps...>(Func LOG_PARAM(task_name));
+				CallHint<TFilter, TDecoratedComps...>(func);
 			}
 			else
 			{
-				CallNoHint<TFilter, TDecoratedComps...>(Func LOG_PARAM(task_name));
+				CallNoHint<TFilter, TDecoratedComps...>(func);
 			}
 		}
 	};

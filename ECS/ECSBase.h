@@ -11,66 +11,8 @@
 
 #define IMPLEMENT_EMPTY_COMPONENT(COMP) template<> void ECS::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId) { }
 
-#define ECS_LOG_ENABLED 1
-
-#if ECS_LOG_ENABLED
-#define LOG(x) x
-#define LOG_PARAM(x) , x
-#else
-#define LOG(x)
-#define LOG_PARAM(x)
-#endif
-
 namespace ECS
 {
-	struct ScopeDurationLog
-	{
-	private:
-		std::chrono::time_point<std::chrono::system_clock> start;
-		const char* format = nullptr;
-		const char* name = nullptr;
-	public:
-		ScopeDurationLog(const char* in_format, const char* in_name = "")
-			: start(std::chrono::system_clock::now())
-			, format(in_format), name(in_name) {}
-		~ScopeDurationLog()
-		{
-			const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start);
-			printf(format, name, duration_us.count());
-		}
-	};
-
-	struct ScopeDurationLogAccumulative
-	{
-	private:
-		std::chrono::time_point<std::chrono::system_clock> start;
-		std::chrono::microseconds duration_us;
-		const char* format = nullptr;
-		const char* name = nullptr;
-	public:
-		struct AccumulationScope
-		{
-			ScopeDurationLogAccumulative& owner;
-			std::chrono::time_point<std::chrono::system_clock> start;
-			AccumulationScope(ScopeDurationLogAccumulative& in_owner) 
-				: owner(in_owner), start(std::chrono::system_clock::now()) {}
-			~AccumulationScope() 
-			{ 
-				owner.duration_us += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start);
-			}
-		};
-		ScopeDurationLogAccumulative(const char* in_format, const char* in_name = "")
-			: start(std::chrono::system_clock::now())
-			, duration_us(0)
-			, format(in_format)
-			, name(in_name) {}
-		~ScopeDurationLogAccumulative()
-		{
-			const auto duration_whole_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start);
-			printf(format, name, duration_whole_us.count(), duration_us.count());
-		}
-	};
-
 	static const constexpr int kMaxComponentTypeNum = 256;
 	static const constexpr int kMaxEntityNum = 1024;
 	static const constexpr int kActuallyImplementedComponents = 12;
@@ -83,12 +25,12 @@ namespace ECS
 		using TIndex = int16_t;
 		TIndex index = -1;
 
-		constexpr bool IsValid() const { return index >= 0 && index < kMaxEntityNum; }
+		constexpr bool IsValidForm() const { return index >= 0 && index < kMaxEntityNum; }
 
 		constexpr EntityId() {}
 		constexpr EntityId(TIndex _idx) : index(_idx)
 		{
-			assert(IsValid());
+			assert(IsValidForm());
 		}
 		constexpr bool operator==(const EntityId& other) const
 		{
@@ -102,7 +44,7 @@ namespace ECS
 		TGeneration generation = -1;
 		EntityId id;
 
-		bool IsValid() const { return id.IsValid() && (generation >= 0); }
+		constexpr bool IsValidForm() const { return id.IsValidForm() && (generation >= 0); }
 
 		operator EntityId() const { return id; }
 
@@ -153,26 +95,6 @@ namespace ECS
 
 	namespace Details
 	{
-		template<class T>
-		struct AsFunction
-			: public AsFunction<decltype(&T::operator())>
-		{};
-
-		template<class ReturnType, class... Args>
-		struct AsFunction<ReturnType(Args...)> {
-			using type = std::function<ReturnType(Args...)>;
-		};
-
-		template<class ReturnType, class... Args>
-		struct AsFunction<ReturnType(*)(Args...)> {
-			using type = std::function<ReturnType(Args...)>;
-		};
-
-		template<class Class, class ReturnType, class... Args>
-		struct AsFunction<ReturnType(Class::*)(Args...) const> {
-			using type = std::function<ReturnType(Args...)>;
-		};
-
 		template<typename THead, typename... TTail>
 		struct Split
 		{
@@ -314,18 +236,12 @@ namespace ECS
 		};
 
 		template<size_t N, class T>
-		bool any_common_bit(Bitset2::bitset2<N, T> const &bs1, Bitset2::bitset2<N, T> const &bs2)
+		bool AnyCommonBit(Bitset2::bitset2<N, T> const &bs1, Bitset2::bitset2<N, T> const &bs2)
 		{
 			using base_t = T;
 			return Bitset2::zip_fold_or(bs1, bs2,
 				[](base_t v1, base_t v2) noexcept
 			{ return 0 != (v1 & v2); });
 		}
-	}
-
-	template<class F>
-	auto ToFunc(F&& f) -> typename Details::AsFunction<F>::type 
-	{
-		return { std::forward<F>(f) };
 	}
 }

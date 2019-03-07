@@ -1,15 +1,65 @@
 #pragma once
 
 #include "ECSManager.h"
-#include <future>
 #include <optional>
 #include <deque>
 #include <thread>
 #include <mutex>
 #include <chrono>
+#include <condition_variable>
+#include <atomic>
+#include "ECSStat.h"
 
 namespace ECS
 {
+	namespace Details
+	{
+		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
+		void CallGeneric(ECSManager& ecs, void* func_ptr)
+		{
+			using TFuncPtr = typename std::add_pointer_t<void(EntityId, TDecoratedComps...)>;
+			TFuncPtr func = reinterpret_cast<TFuncPtr>(func_ptr);
+			ecs.Call<TFilter>(func);
+		}
+	}
+
+	class ThreadGate
+	{
+		enum class EState { Close, Open };
+		std::atomic<EState> state = EState::Close;
+		std::mutex mutex;
+		std::condition_variable cv;
+
+	public:
+		void WaitEnterClose()
+		{
+			std::unique_lock<std::mutex> lk(mutex);
+			cv.wait(lk, [this]() { return EState::Open == state; });
+			state = EState::Close;
+		}
+
+		void WaitEnterClose(std::atomic_bool& close_request)
+		{
+			std::unique_lock<std::mutex> lk(mutex);
+			cv.wait(lk, [this, &close_request]() { return (EState::Open == state) || close_request; });
+			state = EState::Close;
+		}
+
+		void Open()
+		{
+			{
+				std::lock_guard<std::mutex> lk(mutex);
+				state = EState::Open;
+			}
+			cv.notify_one();
+		}
+
+		void JustNotifyAll()
+		{
+			cv.notify_all();
+		}
+	};
+
 	struct ExecutionStreamId
 	{
 		using Mask = Bitset2::bitset2<kMaxExecutionStream>;
@@ -47,14 +97,16 @@ namespace ECS
 	class ECSManagerAsync : public ECSManager
 	{
 	protected:
-		using InnerTask = std::packaged_task<void()>;
+		using InnerSyncFunc = std::add_pointer<void(ECSManager&, void*)>::type;
 		struct Task
 		{
-			InnerTask func;
+			InnerSyncFunc func = nullptr;
+			void* per_entity_function = nullptr;
 			ComponentCache read_only_components;
 			ComponentCache mutable_components;
 			ExecutionStreamId preserve_order_in_execution_stream;
-			LOG(const char* task_name = nullptr;)
+			ThreadGate* optional_notifier = nullptr;
+			STAT(StatId stat_id = StatId::Count;)
 		};
 
 		class WorkerThread
@@ -64,12 +116,10 @@ namespace ECS
 			ECSManagerAsync& owner;
 			std::thread thread;
 			std::atomic_bool runs = false;
-			LOG(const char* const worker_name = nullptr;)
+			int worker_idx = -1;
 
-			WorkerThread(ECSManagerAsync& in_owner LOG_PARAM(const char* in_worker_name))
-				: owner(in_owner)
-				, thread()
-				LOG_PARAM(worker_name(in_worker_name))
+			WorkerThread(ECSManagerAsync& in_owner, int idx)
+				: owner(in_owner), thread(), worker_idx(idx)
 			{}
 
 			const Task* GetTask_Unsafe() const
@@ -95,17 +145,24 @@ namespace ECS
 
 					if (task.has_value())
 					{
-						LOG(printf_s("ECS worker '%s' found '%s' stream: %d \n"
-							, worker_name, task->task_name, task->preserve_order_in_execution_stream.index);)
-						task->func();
+						LOG(printf_s("ECS worker %d found '%s' stream: %d \n"
+							, worker_idx, StatIdToStr(task->stat_id), task->preserve_order_in_execution_stream.index);)
+						{
+							STAT(ScopeDurationLog __sdl(task->stat_id);)
+							task->func(owner, task->per_entity_function);
+						}
+						auto optional_notifier = task->optional_notifier;
 						{
 							std::lock_guard<std::mutex> guard(owner.mutex);
 							task = {};
 						}
+						if (optional_notifier)
+						{
+							optional_notifier->Open();
+						}
 					}
 					else
 					{
-						//LOG(printf_s("ECS worker '%s' found no task\n", worker_name);)
 						std::unique_lock<std::mutex> guard(owner.new_task_mutex);
 						if (runs)
 						{
@@ -130,7 +187,7 @@ namespace ECS
 		{
 			if (pending_tasks.empty())
 				return {};
-			//LOG(ScopeDurationLog sdl("ECS %s in %lld us \n", "found task");)
+			STAT(ScopeDurationLog __sdl(StatId::FindTaskToExecute);)
 			ExecutionStreamId::Mask unusable_streams;
 			ComponentCache currently_read_only_components;
 			ComponentCache currently_mutable_components;
@@ -154,9 +211,9 @@ namespace ECS
 			for (auto it = pending_tasks.begin(); it != pending_tasks.end(); it++)
 			{
 				const bool ok_stream = !it->preserve_order_in_execution_stream.Test(unusable_streams);
-				const bool ok_components = !Details::any_common_bit(it->mutable_components, currently_read_only_components)
-					&& !Details::any_common_bit(it->read_only_components, currently_mutable_components)
-					&& !Details::any_common_bit(it->mutable_components, currently_mutable_components);
+				const bool ok_components = !Details::AnyCommonBit(it->mutable_components, currently_read_only_components)
+					&& !Details::AnyCommonBit(it->read_only_components, currently_mutable_components)
+					&& !Details::AnyCommonBit(it->mutable_components, currently_mutable_components);
 				if (ok_stream && ok_components)
 				{
 					std::optional<Task> result(std::move(*it));
@@ -173,7 +230,7 @@ namespace ECS
 	public:
 		ECSManagerAsync()
 			: ECSManager()
-			, wt{ { *this LOG_PARAM("wt0") }, { *this LOG_PARAM("wt1") }, { *this LOG_PARAM("wt2") }, { *this LOG_PARAM("wt3") } }
+			, wt{ { *this, 0 }, { *this, 1 }, { *this, 2 }, { *this, 3 } }
 		{}
 
 		void StartThreads() 
@@ -225,17 +282,24 @@ namespace ECS
 				if (main_thread_task.has_value())
 				{
 					LOG(printf_s("ECS main thread found '%s' stream: %d \n"
-						, main_thread_task->task_name, main_thread_task->preserve_order_in_execution_stream.index);)
-					main_thread_task->func();
+						, StatIdToStr(main_thread_task->stat_id), main_thread_task->preserve_order_in_execution_stream.index);)
+					{
+						STAT(ScopeDurationLog __sdl(main_thread_task->stat_id);)
+						main_thread_task->func(*this, main_thread_task->per_entity_function);
+					}
+					auto optional_notifier = main_thread_task->optional_notifier;
 					{
 						std::lock_guard<std::mutex> guard(mutex);
 						main_thread_task = {};
+					}
+					if (optional_notifier)
+					{
+						optional_notifier->Open();
 					}
 					result = true;
 				}
 				else
 				{
-					//LOG(printf_s("ECS main thread found no task\n");)
 					break;
 				}
 			}
@@ -244,9 +308,10 @@ namespace ECS
 		}
 
 		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
-		std::future<void> CallAsync(const std::function<void(EntityId, TDecoratedComps...)>& func
-			, ExecutionStreamId preserve_order_in_execution_stream = {}
-			LOG_PARAM(const char* task_name = nullptr))
+		void CallAsync(void(*func)(EntityId, TDecoratedComps...)
+			, ExecutionStreamId preserve_order_in_execution_stream
+			, ThreadGate* optional_notifier
+			STAT_PARAM(StatId stat_id))
 		{
 			assert(debug_lock);
 			//We can ignore filter in the following masks:
@@ -254,20 +319,22 @@ namespace ECS
 			constexpr ComponentCache mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
 			static_assert((read_only_components & mutable_components).none(), "");
 
-			InnerTask task([this, func LOG_PARAM(task_name)]() { Call<TFilter>(func LOG_PARAM(task_name)); });
-			auto future = task.get_future();
-
+			InnerSyncFunc inner_func = &Details::CallGeneric<TFilter, TDecoratedComps...>;
+			void* per_entity_func = func;
 			{
 				std::lock_guard<std::mutex> guard(mutex);
-				pending_tasks.push_back(Task{ std::move(task), read_only_components, mutable_components, preserve_order_in_execution_stream LOG_PARAM(task_name) });
+				pending_tasks.push_back(Task{ inner_func
+					, per_entity_func
+					, read_only_components
+					, mutable_components
+					, preserve_order_in_execution_stream
+					, optional_notifier 
+					STAT_PARAM(stat_id) });
 			}
-			LOG(printf_s("ECS new async task: '%s'\n", task_name);)
+
+			LOG(printf_s("ECS new async task: '%s'\n", StatIdToStr(stat_id));)
 
 			new_task_cv.notify_one();
-
-			return future;
 		}
-
-
 	};
 }

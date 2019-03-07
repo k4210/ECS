@@ -56,12 +56,12 @@ void Test_0()
 {
 	assert(0 == ecs.GetNumEntities());
 	const EntityHandle id0 = ecs.AddEntity();
-	assert(id0.IsValid());
+	assert(id0.IsValidForm());
 	assert(0 == id0.id.index);//
 	assert(ecs.IsValidEntity(id0));
 	assert(1 == ecs.GetNumEntities());
 	const EntityHandle id1 = ecs.AddEntity(100);
-	assert(id1.IsValid());
+	assert(id1.IsValidForm());
 	assert(100 == id1.id.index);//
 	assert(ecs.IsValidEntity(id1));
 	assert(2 == ecs.GetNumEntities());
@@ -221,7 +221,7 @@ void Test_2()
 			assert(t1.id == id);
 			counter++;
 		});
-		ecs.Call(test_lambda LOG_PARAM("sync test_lambda n"));
+		ecs.Call(test_lambda);
 		assert(counter == 8);
 	}
 }
@@ -264,7 +264,7 @@ void Test_3()
 			std::this_thread::sleep_for(std::chrono::microseconds(1000));
 			counter1++;
 		});
-		auto future1 = ecs.CallAsync(test_lambda1, 1 LOG_PARAM("test_lambda1"));
+		auto future1 = ecs.CallAsync(test_lambda1, 1);
 
 		int counter2 = 0;
 		auto test_lambda2 = ToFunc([&](EntityId id, TestComponent2& t2, TestComponent3& t3)
@@ -274,7 +274,7 @@ void Test_3()
 			std::this_thread::sleep_for(std::chrono::microseconds(1000));
 			counter2++;
 		});
-		auto future2 = ecs.CallAsync(test_lambda2, 2 LOG_PARAM("test_lambda2"));
+		auto future2 = ecs.CallAsync(test_lambda2, 2);
 
 
 		future1.get();

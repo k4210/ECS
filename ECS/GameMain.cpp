@@ -3,31 +3,30 @@
 
 SResources* SResources::inst = nullptr;
 
-void RenderLoop(sf::RenderWindow* window)
+void RenderLoop()
 {
 	auto& inst = *SResources::inst;
-	window->setActive(true);
-	while (window->isOpen())
+	inst.window.setActive(true);
+	while (!inst.close_request)
 	{
-		window->clear();
-		
-		std::future<void> graphic_update_done;
+		inst.window.clear();
 		{
-			LOG(ScopeDurationLog sdl("RenderLoop waited for %s %lld us \n", " triggering Update");)
-			graphic_update_done = inst.main_thread_triggered_graphic_update.get_future().get();
+			STAT(ScopeDurationLog __sdl(StatId::Graphic_WaitForUpdate);)
+			inst.wait_for_graphic_update.WaitEnterClose(inst.close_request);
 		}
+		if (inst.close_request)
+			return;
+
 		{
-			LOG(ScopeDurationLog sdl("RenderLoop waited for %s %lld us \n", " finishing Update");)
-			graphic_update_done.wait();
+			STAT(ScopeDurationLog __sdl(StatId::Graphic_RenderSync);)
+			inst.ecs.Call(&GraphicSystem_RenderSync);
+			inst.wait_for_render_sync.Open();
 		}
-		inst.main_thread_triggered_graphic_update = {};
-		//TODO: what about closing window ?
 
-		LOG(ScopeDurationLog sdl("RenderLoop %s %lld us \n", "Sync and Display");)
-		inst.graphic_system.RenderSync();
-		inst.render_thread_done_sync.set_value();
-
-		window->display();
+		{
+			STAT(ScopeDurationLog __sdl(StatId::Display);)
+			inst.window.display();
+		}
 	}
 }
 
@@ -52,70 +51,93 @@ void CleanGame()
 {
 	SResources::inst->ecs.StopThreads();
 	SResources::inst->ecs.Reset();
-	delete SResources::inst;
-	SResources::inst = nullptr;
+}
+
+void HandleSystemEvents()
+{
+	auto& inst = *SResources::inst;
+	sf::Event event;
+	while (inst.window.pollEvent(event))
+	{
+		if (event.type == sf::Event::Closed)
+		{
+			inst.close_request = true;
+			inst.wait_for_graphic_update.JustNotifyAll();
+		}
+	}
 }
 
 void MainLoopBody()
 {
+	STAT(ScopeDurationLog __sdl(StatId::GameFrame);)
 	const auto frame_start = std::chrono::system_clock::now();
 	auto& inst = *SResources::inst;
 
-	{
-		sf::Event event;
-		while (inst.window.pollEvent(event))
-		{
-			if (event.type == sf::Event::Closed)
-			{
-				inst.window.close();
-				//set inst.main_thread_triggered_graphic_update 
-			}
-		}
-	}
+	HandleSystemEvents();
+	if(inst.close_request) 
+		return;
 
 	{
 		ECS::DebugLockScope __dls(inst.ecs);
-		inst.main_thread_triggered_graphic_update.set_value(inst.graphic_system.Update());
-		inst.movement_system.Update();
+		inst.ecs.CallAsync(&GraphicSystem_Update, EStreams::Graphic, &inst.wait_for_graphic_update STAT_PARAM(StatId::Graphic_Update));
+		inst.ecs.CallAsync(&GameMovement_Update, EStreams::None, nullptr STAT_PARAM(StatId::GameMovement_Update));
+
+		inst.ecs.WorkFromMainThread(false);
+
+		{
+			STAT(ScopeDurationLog __sdl(StatId::Graphic_WaitForRenderSync);)
+			inst.wait_for_render_sync.WaitEnterClose();
+		}
 
 		while (inst.ecs.AnyWorkerIsBusy())
 		{
-			inst.ecs.WorkFromMainThread(false);
 			std::this_thread::yield();
 		}
-
-		{
-			LOG(ScopeDurationLog sdl("MainLoop waited for %s %lld us \n", " Render Sync");)
-			inst.render_thread_done_sync.get_future().wait();
-		}
-		inst.render_thread_done_sync = {};
 	}
 
-	HandleGameEvents();
+	{
+		EventStorage storage;
+		while (SResources::inst->event_manager.Pop(storage))
+		{
+			IEvent* e = storage.Get();
+			assert(e);
+			if (e)
+			{
+				e->Execute();
+			}
+		}
+	}
 	
 
 	const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - frame_start);
 	inst.frame_time_seconds = duration_us.count() / 1000000.0f;
-	LOG(printf_s("FRAME TIME:  %lld us \n", duration_us.count());)
+	inst.frames++;
 }
 
 int main()
 {
 	SResources::inst = new SResources();
-
-	auto& inst = *SResources::inst;
-	inst.window.create(sf::VideoMode(800, 600), "HnS");
-	inst.window.setActive(false);
-	sf::Thread render_thread = sf::Thread(&RenderLoop, &inst.window);
-	render_thread.launch();
-
-	InitializeGame();
-
-	while (SResources::inst->window.isOpen())
 	{
-		MainLoopBody();
-	}
+		auto& inst = *SResources::inst;
+		inst.window.create(sf::VideoMode(800, 600), "HnS");
+		inst.window.setActive(false);
 
-	CleanGame();
+		InitializeGame();
+		{
+			std::thread render_thread(RenderLoop);
+			while (!SResources::inst->close_request)
+			{
+				MainLoopBody();
+			}
+			render_thread.join();
+			inst.window.close();
+		}
+		STAT(ECS::Stat::LogAll(inst.frames);)
+		CleanGame();
+	}
+	delete SResources::inst;
+	SResources::inst = nullptr;
+	getchar();
+
 	return 0;
 }

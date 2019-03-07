@@ -39,6 +39,9 @@
     <ClInclude Include="Systems.h">
       <Filter>Game</Filter>
     </ClInclude>
+    <ClInclude Include="ECSStat.h">
+      <Filter>ECS</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ECSTest.cpp">
