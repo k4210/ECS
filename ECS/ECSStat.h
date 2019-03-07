@@ -2,10 +2,12 @@
 
 #include <chrono>
 #include <atomic>
+#include <vector>
+#include <assert.h>
 
 #ifndef NDEBUG
 #define ECS_STAT_ENABLED 1
-#define ECS_LOG_ENABLED 0
+#define ECS_LOG_ENABLED 1
 #else
 #define ECS_STAT_ENABLED 0
 #define ECS_LOG_ENABLED 0
@@ -18,26 +20,15 @@
 #define STAT(x) x
 #define STAT_PARAM(x) , x
 
-enum class StatId : int
-{
-	FindTaskToExecute,
-	Graphic_WaitForUpdate,
-	Graphic_RenderSync,
-	Graphic_Update,
-	Graphic_WaitForRenderSync,
-	Display,
-	GameMovement_Update,
-	GameFrame,
-	Count
-};
-
-const char* StatIdToStr(StatId id);
-
 namespace ECS
 {
+	using StatId = int;
+
+	const char* Str(StatId id);
+
 	struct Stat
 	{
-		constexpr const static int kStatsNum = static_cast<int>(StatId::Count);
+		static const constexpr StatId FindTaskToExecuteId = -1;
 
 		struct Record
 		{
@@ -61,41 +52,51 @@ namespace ECS
 			}
 		};
 
-		using TRecords = std::array<Record, kStatsNum>;
+		using TRecords = std::vector<Record>;
 		static TRecords records;
+
+		using FStatToStr = std::add_pointer<const char*(StatId)>::type;
+		static const FStatToStr stat_to_str;
+
 		static void Add(StatId record_index, std::chrono::microseconds duration_time)
 		{
 			const auto microseconds = duration_time.count();
-			Record& record = records[static_cast<int>(record_index)];
+			Record& record = records[static_cast<int>(record_index + 1)];
 			record.calls++;
 			record.sum += microseconds;
 			if(microseconds > record.max)
 				record.max = microseconds;
 		}
 
-		static void Reset()
-		{
-			Record r;
-			records.fill(r);
-		}
-
 		static void LogAll(int64_t frames)
 		{
 			printf_s("Frame: %lli\n", frames);
-			for (int i = 0; i < kStatsNum; i++)
+			for (int i = 0; i < records.size(); i++)
 			{
 				Record& record = records[i]; 
 				if (record.calls > 0)
 				{
 					constexpr float to_ms = 1.0f/1000.0f;
-					printf_s("Stat %i\t %s\t avg per call: %f\t avg per frame: %f\t max: %f\t calls per frame: %f\n"
-						, i, StatIdToStr(static_cast<StatId>(i))
-						, record.sum * to_ms / record.calls, record.sum * to_ms / frames, record.max * to_ms
+					printf_s("Stat %2i %-28s avg per call: %7.3f avg per frame: %7.3f max: %7.3f calls per frame: %7.3f\n"
+						, i-1, Str(i-1)
+						, record.sum * to_ms / record.calls
+						, record.sum * to_ms / frames
+						, record.max * to_ms
 						, double(record.calls) / frames);
 				}
 			}
 		}
 	};
+
+	inline const char* Str(StatId id)
+	{
+		if (id == Stat::FindTaskToExecuteId)
+		{
+			return "FindTaskToExecute";
+		}
+		assert(Stat::stat_to_str);
+		return Stat::stat_to_str(id);
+	}
 
 	struct ScopeDurationLog
 	{
@@ -106,6 +107,12 @@ namespace ECS
 		ScopeDurationLog(StatId in_id)
 			: start(std::chrono::system_clock::now())
 			, id(in_id) {}
+
+		template<typename T>
+		ScopeDurationLog(T in_id)
+			: start(std::chrono::system_clock::now())
+			, id(static_cast<int>(in_id)) {}
+
 		~ScopeDurationLog()
 		{
 			const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start);

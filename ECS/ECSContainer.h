@@ -8,7 +8,7 @@
 
 namespace ECS
 {
-	template<typename TComponent> struct DenseComponentContainer : public BaseComponentContainer<false, false>
+	template<typename TComponent> struct DenseComponentContainer : public Details::BaseComponentContainer<false, false>
 	{
 	private:
 		TComponent components[kMaxEntityNum];
@@ -16,16 +16,16 @@ namespace ECS
 	public:
 		TComponent & Add(EntityId id)
 		{
-			components[id.index].Initialize();
-			return components[id.index];
+			components[id].Initialize();
+			return components[id];
 		}
 
-		void Remove(EntityId id) { components[id.index].Reset(); }
+		void Remove(EntityId id) { components[id].Reset(); }
 
-		TComponent& GetChecked(EntityId id) { return components[id.index]; }
+		TComponent& GetChecked(EntityId id) { return components[id]; }
 	};
 
-	template<typename TComponent, bool TUseBinarySearch> struct SortedComponentContainer : public BaseComponentContainer<true, true>
+	template<typename TComponent, bool TUseBinarySearch> struct SortedComponentContainer : public Details::BaseComponentContainer<true, true>
 	{
 		static const constexpr bool kUseBinarySearch = TUseBinarySearch;
 
@@ -39,7 +39,7 @@ namespace ECS
 			return A.first < B.first;
 		}
 
-		constexpr auto DesiredPositionSearch(EntityId::TIndex id, TCacheIter previous_pos = 0)
+		constexpr auto DesiredPositionSearch(EntityId::TIndex id, Details::TCacheIter previous_pos = 0)
 		{
 			return std::lower_bound(components.begin() + previous_pos, components.end(), TPair{ id, TComponent{} }, &Less);
 		}
@@ -60,8 +60,8 @@ namespace ECS
 
 		void Remove(EntityId id)
 		{
-			auto it = DesiredPositionSearch(id.index);
-			assert(it->first == id.index);
+			auto it = DesiredPositionSearch(id);
+			assert(it->first == id);
 			it->second.Reset();
 			components.erase(it);
 		}
@@ -73,7 +73,7 @@ namespace ECS
 			return it->second;
 		}
 
-		TComponent& GetChecked(EntityId id, TCacheIter& cached_iter)
+		TComponent& GetChecked(EntityId id, Details::TCacheIter& cached_iter)
 		{
 			auto it = [&]() 
 			{
@@ -97,14 +97,14 @@ namespace ECS
 			}();
 
 			assert((it != components.end()) && (it->first == id.index));
-			cached_iter = static_cast<TCacheIter>(std::distance(components.begin(), it) + 1);
+			cached_iter = static_cast<Details::TCacheIter>(std::distance(components.begin(), it) + 1);
 			return it->second;
 		}
 
 		auto& GetCollection() { return components; }
 	};
 
-	template<typename TComponent> struct SparseComponentContainer : public BaseComponentContainer<false, true>
+	template<typename TComponent> struct SparseComponentContainer : public Details::BaseComponentContainer<false, true>
 	{
 	private:
 		std::map<EntityId::TIndex, TComponent> components;

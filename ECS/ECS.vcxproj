@@ -93,8 +93,9 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>C:\Users\macie\source\SFML-2.5.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>SFML_STATIC;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>SFML_STATIC;_HAS_EXCEPTIONS=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <ExceptionHandling>false</ExceptionHandling>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>C:\Users\macie\source\SFML-2.5.1\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
@@ -130,8 +131,9 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <AdditionalIncludeDirectories>C:\Users\macie\source\SFML-2.5.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>SFML_STATIC;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>SFML_STATIC;_HAS_EXCEPTIONS=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <ExceptionHandling>false</ExceptionHandling>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -142,17 +144,20 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="Components.h" />
+    <ClInclude Include="concurrentqueue\concurrentqueue.h" />
     <ClInclude Include="ECSBase.h" />
     <ClInclude Include="ECSContainer.h" />
     <ClInclude Include="ECSEvent.h" />
     <ClInclude Include="ECSManager.h" />
     <ClInclude Include="ECSManagerAsync.h" />
     <ClInclude Include="ECSStat.h" />
+    <ClInclude Include="GameBase.h" />
     <ClInclude Include="Systems.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Components.cpp" />
     <ClCompile Include="ECSTest.cpp" />
+    <ClCompile Include="GameBase.cpp" />
     <ClCompile Include="GameMain.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

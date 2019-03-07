@@ -7,9 +7,9 @@
 #include "bitset2\bitset2.hpp"
 
 #define IMPLEMENT_COMPONENT(COMP) COMP::Container ECS::Component<COMP::kComponentTypeIdx, COMP::Container>::__container; \
-	template<> void ECS::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId id) { COMP::GetContainer().Remove(id); } \
+	template<> void ECS::Details::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId id) { COMP::GetContainer().Remove(id); } \
 
-#define IMPLEMENT_EMPTY_COMPONENT(COMP) template<> void ECS::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId) { }
+#define IMPLEMENT_EMPTY_COMPONENT(COMP) template<> void ECS::Details::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId) { }
 
 namespace ECS
 {
@@ -23,78 +23,69 @@ namespace ECS
 	struct EntityId
 	{
 		using TIndex = int16_t;
+	private:
 		TIndex index = -1;
 
-		constexpr bool IsValidForm() const { return index >= 0 && index < kMaxEntityNum; }
-
-		constexpr EntityId() {}
 		constexpr EntityId(TIndex _idx) : index(_idx)
 		{
 			assert(IsValidForm());
 		}
-		constexpr bool operator==(const EntityId& other) const
-		{
-			return index == other.index;
-		}
+
+		friend class ECSManager;
+	public:
+		constexpr EntityId() = default;
+
+		constexpr bool IsValidForm() const { return index >= 0 && index < kMaxEntityNum; }
+
+		constexpr operator TIndex() const { return index; }
 	};
 
 	struct EntityHandle
 	{
+	private:
 		using TGeneration = int16_t;
 		TGeneration generation = -1;
 		EntityId id;
+		friend class ECSManager;
+
+		constexpr EntityHandle(TGeneration in_generation, EntityId in_idx)
+			: generation(in_generation), id(in_idx) {}
+	public:
+		constexpr EntityHandle() = default;
 
 		constexpr bool IsValidForm() const { return id.IsValidForm() && (generation >= 0); }
 
 		operator EntityId() const { return id; }
-
-		bool operator==(const EntityHandle& other) const
-		{
-			return (id == other.id) && (generation == other.generation);
-		}
 	};
-
-	using TCacheIter = unsigned int;
-
-	template<int T, bool TIsEmpty> struct AnyComponentBase
-	{
-		static const constexpr int kComponentTypeIdx = T; //use  boost::hana::type_c ?
-		static_assert(kComponentTypeIdx < kMaxComponentTypeNum, "too many component types");
-		static_assert(kComponentTypeIdx < kActuallyImplementedComponents, "not implemented component");
-
-		static const constexpr bool kIsEmpty = TIsEmpty;
-	};
-
-	template<int T> struct EmptyComponent : public AnyComponentBase<T, true> {};
-
-	template<int T> struct ComponentBase : public AnyComponentBase<T, false>
-	{
-	private:
-		friend class ECSManager;
-		static void Remove(EntityId id);
-	};
-
-	template<int T, typename TContainer, int TInitialReserveHint = (kMaxEntityNum/8)> struct Component : public ComponentBase<T>
-	{
-		using Container = TContainer;
-		static Container __container;
-		static Container& GetContainer() { return __container; }
-		constexpr static const int kInitialReserve = TInitialReserveHint;
-
-		void Initialize() {}
-		void Reset() {}
-	};
-
-	template<bool TUseCachedIter, bool TUseAsFilter> struct BaseComponentContainer
-	{
-		constexpr static const bool kUseCachedIter = TUseCachedIter;
-		constexpr static const bool kUseAsFilter = TUseCachedIter;
-	};
-
-	using ComponentCache = Bitset2::bitset2<kMaxComponentTypeNum>;
 
 	namespace Details
 	{
+		using TCacheIter = unsigned int;
+
+		template<int T, bool TIsEmpty> struct AnyComponentBase
+		{
+			static const constexpr int kComponentTypeIdx = T; //use  boost::hana::type_c ?
+			static_assert(kComponentTypeIdx < kMaxComponentTypeNum, "too many component types");
+			static_assert(kComponentTypeIdx < kActuallyImplementedComponents, "not implemented component");
+
+			static const constexpr bool kIsEmpty = TIsEmpty;
+		};
+
+		template<int T> struct ComponentBase : public Details::AnyComponentBase<T, false>
+		{
+		private:
+			friend class ECSManager;
+			static void Remove(EntityId id);
+		};
+
+		template<bool TUseCachedIter, bool TUseAsFilter> struct BaseComponentContainer
+		{
+			constexpr static const bool kUseCachedIter = TUseCachedIter;
+			constexpr static const bool kUseAsFilter = TUseCachedIter;
+		};
+
+		using ComponentCache = Bitset2::bitset2<kMaxComponentTypeNum>;
+
 		template<typename THead, typename... TTail>
 		struct Split
 		{
@@ -148,18 +139,6 @@ namespace ECS
 				return ComponentCache{};
 			}
 		};
-
-		template<bool TIgnorePointers, EComponentFilerOptions TFilerOptions, typename... TComps>
-		constexpr ComponentCache BuildFilter()
-		{
-			return FilterBuilder<TComps...>::template Build<TIgnorePointers, TFilerOptions>();
-		}
-
-		template<bool TIgnorePointers, EComponentFilerOptions TFilerOptions>
-		constexpr ComponentCache BuildFilter()
-		{
-			return ComponentCache{};
-		}
 
 		template<typename... TComps> static constexpr int NumCachedIter()
 		{
@@ -244,4 +223,17 @@ namespace ECS
 			{ return 0 != (v1 & v2); });
 		}
 	}
+
+	template<int T> struct EmptyComponent : public Details::AnyComponentBase<T, true> {};
+
+	template<int T, typename TContainer, int TInitialReserveHint = (kMaxEntityNum / 8)> struct Component : public Details::ComponentBase<T>
+	{
+		using Container = TContainer;
+		static Container __container;
+		static Container& GetContainer() { return __container; }
+		constexpr static const int kInitialReserve = TInitialReserveHint;
+
+		void Initialize() {}
+		void Reset() {}
+	};
 }

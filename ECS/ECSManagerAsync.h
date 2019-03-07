@@ -38,13 +38,6 @@ namespace ECS
 			state = EState::Close;
 		}
 
-		void WaitEnterClose(std::atomic_bool& close_request)
-		{
-			std::unique_lock<std::mutex> lk(mutex);
-			cv.wait(lk, [this, &close_request]() { return (EState::Open == state) || close_request; });
-			state = EState::Close;
-		}
-
 		void Open()
 		{
 			{
@@ -52,11 +45,6 @@ namespace ECS
 				state = EState::Open;
 			}
 			cv.notify_one();
-		}
-
-		void JustNotifyAll()
-		{
-			cv.notify_all();
 		}
 	};
 
@@ -102,11 +90,11 @@ namespace ECS
 		{
 			InnerSyncFunc func = nullptr;
 			void* per_entity_function = nullptr;
-			ComponentCache read_only_components;
-			ComponentCache mutable_components;
+			Details::ComponentCache read_only_components;
+			Details::ComponentCache mutable_components;
 			ExecutionStreamId preserve_order_in_execution_stream;
 			ThreadGate* optional_notifier = nullptr;
-			STAT(StatId stat_id = StatId::Count;)
+			STAT(StatId stat_id;)
 		};
 
 		class WorkerThread
@@ -146,7 +134,7 @@ namespace ECS
 					if (task.has_value())
 					{
 						LOG(printf_s("ECS worker %d found '%s' stream: %d \n"
-							, worker_idx, StatIdToStr(task->stat_id), task->preserve_order_in_execution_stream.index);)
+							, worker_idx, Str(task->stat_id), task->preserve_order_in_execution_stream.index);)
 						{
 							STAT(ScopeDurationLog __sdl(task->stat_id);)
 							task->func(owner, task->per_entity_function);
@@ -187,10 +175,10 @@ namespace ECS
 		{
 			if (pending_tasks.empty())
 				return {};
-			STAT(ScopeDurationLog __sdl(StatId::FindTaskToExecute);)
+			STAT(ScopeDurationLog __sdl(-1);)
 			ExecutionStreamId::Mask unusable_streams;
-			ComponentCache currently_read_only_components;
-			ComponentCache currently_mutable_components;
+			Details::ComponentCache currently_read_only_components;
+			Details::ComponentCache currently_mutable_components;
 			auto tasks_dependencies = [&](const Task& task)
 			{
 				task.preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
@@ -282,7 +270,7 @@ namespace ECS
 				if (main_thread_task.has_value())
 				{
 					LOG(printf_s("ECS main thread found '%s' stream: %d \n"
-						, StatIdToStr(main_thread_task->stat_id), main_thread_task->preserve_order_in_execution_stream.index);)
+						, Str(main_thread_task->stat_id), main_thread_task->preserve_order_in_execution_stream.index);)
 					{
 						STAT(ScopeDurationLog __sdl(main_thread_task->stat_id);)
 						main_thread_task->func(*this, main_thread_task->per_entity_function);
@@ -307,20 +295,21 @@ namespace ECS
 			return result;
 		}
 
-		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
+		template<typename TFilter = typename Filter<> STAT_PARAM(typename TStatType), typename... TDecoratedComps>
 		void CallAsync(void(*func)(EntityId, TDecoratedComps...)
 			, ExecutionStreamId preserve_order_in_execution_stream
 			, ThreadGate* optional_notifier
-			STAT_PARAM(StatId stat_id))
+			STAT_PARAM(TStatType in_stat_id))
 		{
 			assert(debug_lock);
 			//We can ignore filter in the following masks:
-			constexpr ComponentCache read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst>::Build<TDecoratedComps...>();
-			constexpr ComponentCache mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
+			constexpr Details::ComponentCache read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst>::Build<TDecoratedComps...>();
+			constexpr Details::ComponentCache mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
 			static_assert((read_only_components & mutable_components).none(), "");
 
 			InnerSyncFunc inner_func = &Details::CallGeneric<TFilter, TDecoratedComps...>;
 			void* per_entity_func = func;
+			STAT(StatId stat_id = static_cast<StatId>(in_stat_id);)
 			{
 				std::lock_guard<std::mutex> guard(mutex);
 				pending_tasks.push_back(Task{ inner_func
@@ -332,7 +321,7 @@ namespace ECS
 					STAT_PARAM(stat_id) });
 			}
 
-			LOG(printf_s("ECS new async task: '%s'\n", StatIdToStr(stat_id));)
+			LOG(printf_s("ECS new async task: '%s'\n", Str(stat_id));)
 
 			new_task_cv.notify_one();
 		}

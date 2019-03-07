@@ -1,34 +1,9 @@
 #pragma once
 #include <SFML/Graphics.hpp>
 #include "Components.h"
-#include "ECSManagerAsync.h"
-#include "ECSEvent.h"
+#include "GameBase.h"
 
-struct SResources
-{
-	sf::RenderWindow window;
-	ECS::ECSManagerAsync ecs;
-
-	float frame_time_seconds = 0.0f;
-	uint64_t frames = 0;
-
-	ThreadGate wait_for_graphic_update;
-	ThreadGate wait_for_render_sync;
-
-	EventManager event_manager;
-
-	std::atomic_bool close_request = false;
-
-	static SResources* inst;
-};
-
-struct EStreams
-{
-	constexpr static const ECS::ExecutionStreamId None{};
-	constexpr static const ECS::ExecutionStreamId Graphic{0};
-};
-
-void GraphicSystem_Update(EntityId id
+void GraphicSystem_Update(ECS::EntityId id
 	, const Position& pos
 	, const CircleSize& size
 	, Sprite2D& sprite)
@@ -40,26 +15,23 @@ void GraphicSystem_Update(EntityId id
 	}
 }
 
-void GraphicSystem_RenderSync(EntityId id, const Sprite2D& sprite)
+void GraphicSystem_RenderSync(ECS::EntityId id, const Sprite2D& sprite)
 {
-	SResources::inst->window.draw(sprite.shape);
+	GResource::inst->window.draw(sprite.shape);
 }
 
-class OutOfBoardEvent : public IEvent
+class OutOfBoardEvent : public ECS::IEvent
 {
-	EntityHandle entity;
+	ECS::EntityHandle entity;
 public:
 	void Execute()
 	{
-		if (SResources::inst->ecs.IsValidEntity(entity))
-		{
-			SResources::inst->ecs.RemoveEntity(entity);
-		}
+		GResource::inst->ecs.RemoveEntity(entity);
 	}
-	OutOfBoardEvent(EntityHandle eh) : entity(eh) {}
+	OutOfBoardEvent(ECS::EntityHandle eh) : entity(eh) {}
 };
 
-void GameMovement_Update(EntityId id
+void GameMovement_Update(ECS::EntityId id
 	, Position& pos
 	, Velocity& vel
 	, const CircleSize& size)
@@ -69,11 +41,11 @@ void GameMovement_Update(EntityId id
 		|| ((pos.pos.y + size.radius) < 0   && vel.velocity.y < 0)
 		|| ((pos.pos.y - size.radius) > 600 && vel.velocity.y > 0))
 	{
-		const auto eh = SResources::inst->ecs.GetHandle(id);
-		SResources::inst->event_manager.Push(EventStorage::Create<OutOfBoardEvent>(eh));
+		const auto eh = GResource::inst->ecs.GetHandle(id);
+		GResource::inst->event_manager.Push(ECS::EventStorage::Create<OutOfBoardEvent>(eh));
 	}
 	else
 	{
-		pos.pos += vel.velocity * 100.0f * SResources::inst->frame_time_seconds;
+		pos.pos += vel.velocity * 100.0f * GResource::inst->frame_time_seconds;
 	}
 }

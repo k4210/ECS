@@ -16,6 +16,9 @@
     <Filter Include="Game">
       <UniqueIdentifier>{b622b802-8215-4f78-871e-cbc6f38e1f42}</UniqueIdentifier>
     </Filter>
+    <Filter Include="concurrentqueue">
+      <UniqueIdentifier>{8082b327-d489-4145-91b1-4eff269b1312}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ECSBase.h">
@@ -42,6 +45,12 @@
     <ClInclude Include="ECSStat.h">
       <Filter>ECS</Filter>
     </ClInclude>
+    <ClInclude Include="concurrentqueue\concurrentqueue.h">
+      <Filter>concurrentqueue</Filter>
+    </ClInclude>
+    <ClInclude Include="GameBase.h">
+      <Filter>Game</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ECSTest.cpp">
@@ -51,6 +60,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Components.cpp">
+      <Filter>Game</Filter>
+    </ClCompile>
+    <ClCompile Include="GameBase.cpp">
       <Filter>Game</Filter>
     </ClCompile>
   </ItemGroup>

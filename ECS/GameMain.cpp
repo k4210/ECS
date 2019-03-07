@@ -1,30 +1,31 @@
 
 #include "Systems.h"
 
-SResources* SResources::inst = nullptr;
+using namespace ECS;
+
+GResource* GResource::inst = nullptr;
 
 void RenderLoop()
 {
-	auto& inst = *SResources::inst;
+	auto& inst = *GResource::inst;
 	inst.window.setActive(true);
+
 	while (!inst.close_request)
 	{
 		inst.window.clear();
 		{
-			STAT(ScopeDurationLog __sdl(StatId::Graphic_WaitForUpdate);)
-			inst.wait_for_graphic_update.WaitEnterClose(inst.close_request);
+			STAT(ScopeDurationLog __sdl(EStatId::Graphic_WaitForUpdate);)
+			inst.wait_for_graphic_update.WaitEnterClose();
 		}
-		if (inst.close_request)
-			return;
 
 		{
-			STAT(ScopeDurationLog __sdl(StatId::Graphic_RenderSync);)
+			STAT(ScopeDurationLog __sdl(EStatId::Graphic_RenderSync);)
 			inst.ecs.Call(&GraphicSystem_RenderSync);
 			inst.wait_for_render_sync.Open();
 		}
 
 		{
-			STAT(ScopeDurationLog __sdl(StatId::Display);)
+			STAT(ScopeDurationLog __sdl(EStatId::Display);)
 			inst.window.display();
 		}
 	}
@@ -32,7 +33,7 @@ void RenderLoop()
 
 void InitializeGame()
 {
-	auto& inst = *SResources::inst;
+	auto& inst = *GResource::inst;
 	const float pi = acosf(-1);
 	for (int i = 0; i < 20; i++)
 	{
@@ -43,35 +44,26 @@ void InitializeGame()
 		const float angle = pi * 2.0f * (i + 1) / 22.0f;
 		inst.ecs.AddComponent<Velocity>(e).velocity = sf::Vector2f(sinf(angle), cosf(angle));
 	}
-
-	inst.ecs.StartThreads();
-}
-
-void CleanGame()
-{
-	SResources::inst->ecs.StopThreads();
-	SResources::inst->ecs.Reset();
 }
 
 void HandleSystemEvents()
 {
-	auto& inst = *SResources::inst;
+	auto& inst = *GResource::inst;
 	sf::Event event;
 	while (inst.window.pollEvent(event))
 	{
 		if (event.type == sf::Event::Closed)
 		{
 			inst.close_request = true;
-			inst.wait_for_graphic_update.JustNotifyAll();
 		}
 	}
 }
 
 void MainLoopBody()
 {
-	STAT(ScopeDurationLog __sdl(StatId::GameFrame);)
+	STAT(ScopeDurationLog __sdl(EStatId::GameFrame);)
 	const auto frame_start = std::chrono::system_clock::now();
-	auto& inst = *SResources::inst;
+	auto& inst = *GResource::inst;
 
 	HandleSystemEvents();
 	if(inst.close_request) 
@@ -79,13 +71,13 @@ void MainLoopBody()
 
 	{
 		ECS::DebugLockScope __dls(inst.ecs);
-		inst.ecs.CallAsync(&GraphicSystem_Update, EStreams::Graphic, &inst.wait_for_graphic_update STAT_PARAM(StatId::Graphic_Update));
-		inst.ecs.CallAsync(&GameMovement_Update, EStreams::None, nullptr STAT_PARAM(StatId::GameMovement_Update));
+		inst.ecs.CallAsync(&GraphicSystem_Update, EStreams::Graphic, &inst.wait_for_graphic_update STAT_PARAM(EStatId::Graphic_Update));
+		inst.ecs.CallAsync(&GameMovement_Update, EStreams::None, nullptr STAT_PARAM(EStatId::GameMovement_Update));
 
 		inst.ecs.WorkFromMainThread(false);
 
 		{
-			STAT(ScopeDurationLog __sdl(StatId::Graphic_WaitForRenderSync);)
+			STAT(ScopeDurationLog __sdl(EStatId::Graphic_WaitForRenderSync);)
 			inst.wait_for_render_sync.WaitEnterClose();
 		}
 
@@ -97,7 +89,7 @@ void MainLoopBody()
 
 	{
 		EventStorage storage;
-		while (SResources::inst->event_manager.Pop(storage))
+		while (GResource::inst->event_manager.Pop(storage))
 		{
 			IEvent* e = storage.Get();
 			assert(e);
@@ -116,28 +108,37 @@ void MainLoopBody()
 
 int main()
 {
-	SResources::inst = new SResources();
+	GResource::inst = new GResource();
 	{
-		auto& inst = *SResources::inst;
-		inst.window.create(sf::VideoMode(800, 600), "HnS");
-		inst.window.setActive(false);
+		auto& inst = *GResource::inst;
+		inst.ecs.StartThreads();
 
 		InitializeGame();
 		{
+			inst.window.create(sf::VideoMode(800, 600), "HnS");
+			inst.window.setActive(false);
 			std::thread render_thread(RenderLoop);
-			while (!SResources::inst->close_request)
+			while (!GResource::inst->close_request)
 			{
 				MainLoopBody();
 			}
-			render_thread.join();
+
+			{
+				ECS::DebugLockScope __dls(inst.ecs);
+				inst.wait_for_graphic_update.Open();
+				render_thread.join();
+			}
 			inst.window.close();
 		}
-		STAT(ECS::Stat::LogAll(inst.frames);)
-		CleanGame();
-	}
-	delete SResources::inst;
-	SResources::inst = nullptr;
-	getchar();
+		inst.ecs.StopThreads();
+		inst.ecs.Reset();
 
+		STAT(ECS::Stat::LogAll(inst.frames);)
+	}
+
+	delete GResource::inst;
+	GResource::inst = nullptr;
+
+	getchar();
 	return 0;
 }
