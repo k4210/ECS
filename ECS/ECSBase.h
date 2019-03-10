@@ -13,11 +13,13 @@
 
 namespace ECS
 {
+	// >>CONFIG
 	static const constexpr int kMaxComponentTypeNum = 256;
 	static const constexpr int kMaxEntityNum = 1024;
 	static const constexpr int kActuallyImplementedComponents = 12;
 	static const constexpr int kMaxConcurrentWorkerThreads = 4; //change ECSManagerAsync constructor
-	static const constexpr int kMaxExecutionStream = 64;
+	static const constexpr int kMaxExecutionNode = 64;
+	// <<CONFIG
 	static_assert(kActuallyImplementedComponents <= kMaxComponentTypeNum, "too many component types");
 
 	struct EntityId
@@ -62,6 +64,13 @@ namespace ECS
 	constexpr bool AnyCommonBit(Bitset2::bitset2<N, T> const &bs1, Bitset2::bitset2<N, T> const &bs2)
 	{
 		return Bitset2::zip_fold_or(bs1, bs2, [](T v1, T v2) { return 0 != (v1 & v2); });
+	}
+
+	template<size_t N, class T>
+	constexpr bool IsSubSetOf(Bitset2::bitset2<N, T> const &sub_set, Bitset2::bitset2<N, T> const &super_set) //
+	{
+		// Any bit unset in super_set must not be set in sub_set
+		return Bitset2::zip_fold_and(sub_set, super_set, [](T sub, T super) { return (sub & ~super) == 0; });
 	}
 
 	namespace Details

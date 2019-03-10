@@ -60,41 +60,6 @@ void HandleSystemEvents()
 	}
 }
 
-void TestOverlap1(ECS::EntityId id_a, const Position& pos_a, const CircleSize& size_a, Velocity& vel_a
-	, ECS::EntityId id_b, Velocity& vel_b)
-{
-	int k = 0; k++;
-}
-
-void TestOverlap2(ECS::EntityId id_a, const Position& pos_a, const CircleSize& size_a
-	, ECS::EntityId id_b, Velocity& vel_b)
-{
-	int k = 0; k++;
-}
-
-struct QuadTree
-{
-	struct Iter
-	{
-		EntityId* id = nullptr;
-		operator bool() const { return id; }
-		const EntityId& operator*() const { return *id; }
-		Iter& operator++() { return *this; }
-		Iter operator++(int)
-		{
-			Iter tmp(*this); // copy
-			operator++(); // pre-increment
-			return tmp;   // return old value
-		}
-	};
-
-	Iter GetIter(ECS::EntityId id, const Position& pos, const CircleSize& size) const
-	{
-		return Iter{};
-	}
-};
-
-
 void MainLoopBody()
 {
 	STAT(ScopeDurationLog __sdl(EStatId::GameFrame);)
@@ -107,19 +72,10 @@ void MainLoopBody()
 
 	{
 		ECS::DebugLockScope __dls(inst.ecs);
-		inst.ecs.CallAsync(&GraphicSystem_Update, EStreams::Graphic, &inst.wait_for_graphic_update STAT_PARAM(EStatId::Graphic_Update));
-		inst.ecs.CallAsync(&GameMovement_Update, EStreams::None, nullptr STAT_PARAM(EStatId::GameMovement_Update));
+		inst.ecs.CallAsync(&GraphicSystem_Update, EExecutionNode::Graphic_Update, {}, &inst.wait_for_graphic_update);
+		inst.ecs.CallAsync(&GameMovement_Update, EExecutionNode::Movement_Update);
 
-		QuadTree qt;
-		{
-			OverlapsContext<Velocity&> ctx(inst.ecs);
-			ctx.Call(&TestOverlap1, qt);
-		}
-		{
-			OverlapsContext<> ctx(inst.ecs);
-			ctx.Call(&TestOverlap2, qt);
-		}
-		inst.ecs.Call(&Animation_Update);
+		inst.ecs.CallAsyncOverlap(&TestOverlap_FirstPass, &TestOverlap_SecondPass, EExecutionNode::TestOverlap, EExecutionNode::Movement_Update.M());
 
 		inst.ecs.WorkFromMainThread(false);
 
@@ -132,6 +88,7 @@ void MainLoopBody()
 		{
 			std::this_thread::yield();
 		}
+		inst.ecs.ResetCompletedTasks();
 	}
 
 	{

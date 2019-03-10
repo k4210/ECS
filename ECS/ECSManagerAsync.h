@@ -12,17 +12,6 @@
 
 namespace ECS
 {
-	namespace Details
-	{
-		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
-		void CallGeneric(ECSManager& ecs, void* func_ptr)
-		{
-			using TFuncPtr = typename std::add_pointer_t<void(EntityId, TDecoratedComps...)>;
-			TFuncPtr func = reinterpret_cast<TFuncPtr>(func_ptr);
-			ecs.Call<TFilter>(func);
-		}
-	}
-
 	class ThreadGate
 	{
 		enum class EState { Close, Open };
@@ -48,27 +37,28 @@ namespace ECS
 		}
 	};
 
-	struct ExecutionStreamId
+	struct ExecutionNodeId
 	{
-		using Mask = Bitset2::bitset2<kMaxExecutionStream>;
+		using Mask = Bitset2::bitset2<kMaxExecutionNode>;
 	private:
 		int index = -1;
 		friend class ECSManagerAsync;
-
 	public:
-		constexpr ExecutionStreamId() = default;
-		constexpr ExecutionStreamId(int in_idx)
-			: index(in_idx) 
+		constexpr ExecutionNodeId() = default;
+		constexpr ExecutionNodeId(int in_idx)
+			: index(in_idx)
 		{
 			assert(IsValid());
 		}
 
+		constexpr int GetIndex() const { return index; }
+
 		constexpr bool IsValid() const
 		{
-			return (index >= 0) && (index < kMaxExecutionStream);
+			return (index >= 0) && (index < kMaxExecutionNode);
 		}
 
-		void MarkOnMask(Mask& mask) const
+		constexpr void MarkOnMask(Mask& mask) const
 		{
 			if (IsValid())
 			{
@@ -76,30 +66,63 @@ namespace ECS
 			}
 		}
 
-		bool Test(const Mask& mask) const
+		constexpr Mask M() const
+		{
+			Mask m; 
+			MarkOnMask(m);
+			return m;
+		}
+
+		constexpr bool Test(const Mask& mask) const
 		{
 			return IsValid() ? mask.test(index) : false;
 		}
 	};
 
-	class ECSManagerAsync : public ECSManager
+	namespace Details
 	{
-	protected:
-		using InnerSyncFunc = std::add_pointer<void(ECSManager&, void*)>::type;
+		struct Task;
+		using InnerSyncFunc = std::add_pointer<void(ECSManager&, Task&)>::type;
 		struct Task
 		{
 			InnerSyncFunc func = nullptr;
 			void* per_entity_function = nullptr;
+			void* per_entity_function_second_pass = nullptr;
 			Details::ComponentCache read_only_components;
 			Details::ComponentCache mutable_components;
-			ExecutionStreamId preserve_order_in_execution_stream;
+			ExecutionNodeId::Mask required_completed_tasks;
+			ExecutionNodeId execution_id;
 			ThreadGate* optional_notifier = nullptr;
-			STAT(StatId stat_id;)
 		};
 
+		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
+		void CallGeneric(ECSManager& ecs, Task& task)
+		{
+			using TFuncPtr = typename std::add_pointer_t<void(EntityId, TDecoratedComps...)>;
+			assert(!!task.per_entity_function);
+			TFuncPtr func = reinterpret_cast<TFuncPtr>(task.per_entity_function);
+			ecs.Call<TFilter>(func);
+		}
+
+		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename THolder, typename TFuncPtr_FP, typename TFuncPtr_SP>
+		void CallGeneric2(ECSManager& ecs, Task& task)
+		{
+			assert(!!task.per_entity_function);
+			TFuncPtr_FP func_fp = reinterpret_cast<TFuncPtr_FP>(task.per_entity_function);
+
+			assert(!!task.per_entity_function_second_pass);
+			TFuncPtr_SP func_sp = reinterpret_cast<TFuncPtr_SP>(task.per_entity_function_second_pass);
+
+			ecs.CallOverlap<TFilterA, TFilterB, THolder>(func_fp, func_sp);
+		}
+	}
+
+	class ECSManagerAsync : public ECSManager
+	{
+	protected:
 		class WorkerThread
 		{
-			std::optional<Task> task;
+			std::optional<Details::Task> task;
 		public:
 			ECSManagerAsync& owner;
 			std::thread thread;
@@ -110,7 +133,7 @@ namespace ECS
 				: owner(in_owner), thread(), worker_idx(idx)
 			{}
 
-			const Task* GetTask_Unsafe() const
+			const Details::Task* GetTask_Unsafe() const
 			{
 				return task.has_value() ? &(*task) : nullptr;
 			}
@@ -122,34 +145,41 @@ namespace ECS
 				return joinable;
 			}
 
+			static bool TryExecuteTask(std::optional<Details::Task>& task, ECSManagerAsync& owner LOG_PARAM(int worker_idx))
+			{
+				{
+					std::lock_guard<std::mutex> guard(owner.mutex);
+					task = owner.FindTaskToExecute_Unguarded();
+				}
+
+				if (task.has_value())
+				{
+					LOG(printf_s("ECS worker %d found '%s'\n", worker_idx, Str(task->execution_id.GetIndex()));)
+					{
+						STAT(ScopeDurationLog __sdl(task->execution_id.GetIndex());)
+						task->func(owner, *task);
+					}
+					auto optional_notifier = task->optional_notifier;
+					{
+						std::lock_guard<std::mutex> guard(owner.mutex);
+						task->execution_id.MarkOnMask(owner.completed_tasks);
+						task = {};
+					}
+					if (optional_notifier)
+					{
+						optional_notifier->Open();
+					}
+					return true;
+				}
+				return false;
+			}
+
 			void Loop()
 			{
 				while (runs)
 				{
-					{
-						std::lock_guard<std::mutex> guard(owner.mutex);
-						task = owner.FindTaskToExecute_Unguarded();
-					}
-
-					if (task.has_value())
-					{
-						LOG(printf_s("ECS worker %d found '%s' stream: %d \n"
-							, worker_idx, Str(task->stat_id), task->preserve_order_in_execution_stream.index);)
-						{
-							STAT(ScopeDurationLog __sdl(task->stat_id);)
-							task->func(owner, task->per_entity_function);
-						}
-						auto optional_notifier = task->optional_notifier;
-						{
-							std::lock_guard<std::mutex> guard(owner.mutex);
-							task = {};
-						}
-						if (optional_notifier)
-						{
-							optional_notifier->Open();
-						}
-					}
-					else
+					const bool bExecuted = TryExecuteTask(task, owner LOG_PARAM(worker_idx));
+					if(!bExecuted)
 					{
 						std::unique_lock<std::mutex> guard(owner.new_task_mutex);
 						if (runs)
@@ -162,32 +192,33 @@ namespace ECS
 		};
 		friend WorkerThread;
 
-		std::deque<Task> pending_tasks;
+		std::deque<Details::Task> pending_tasks;
 		std::mutex mutex;
 		WorkerThread wt[kMaxConcurrentWorkerThreads];
 
 		std::condition_variable new_task_cv;
 		std::mutex new_task_mutex;
 
-		std::optional<Task> main_thread_task;
+		std::optional<Details::Task> main_thread_task;
 
-		std::optional<Task> FindTaskToExecute_Unguarded()
+		ExecutionNodeId::Mask completed_tasks;
+
+		std::optional<Details::Task> FindTaskToExecute_Unguarded()
 		{
 			if (pending_tasks.empty())
 				return {};
 			STAT(ScopeDurationLog __sdl(-1);)
-			ExecutionStreamId::Mask unusable_streams;
+			
 			Details::ComponentCache currently_read_only_components;
 			Details::ComponentCache currently_mutable_components;
-			auto tasks_dependencies = [&](const Task& task)
+			auto tasks_dependencies = [&](const Details::Task& task)
 			{
-				task.preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
 				currently_read_only_components |= task.read_only_components;
 				currently_mutable_components |= task.mutable_components;
 			};
 			for (auto& t : wt)
 			{
-				const Task* task = t.GetTask_Unsafe();
+				const Details::Task* task = t.GetTask_Unsafe();
 				if (!task)
 					continue;
 				tasks_dependencies(*task);
@@ -198,19 +229,15 @@ namespace ECS
 			}
 			for (auto it = pending_tasks.begin(); it != pending_tasks.end(); it++)
 			{
-				const bool ok_stream = !it->preserve_order_in_execution_stream.Test(unusable_streams);
+				const bool ok_required_tasks = IsSubSetOf(it->required_completed_tasks, completed_tasks);
 				const bool ok_components = !AnyCommonBit(it->mutable_components, currently_read_only_components)
 					&& !AnyCommonBit(it->read_only_components, currently_mutable_components)
 					&& !AnyCommonBit(it->mutable_components, currently_mutable_components);
-				if (ok_stream && ok_components)
+				if (ok_required_tasks && ok_components)
 				{
-					std::optional<Task> result(std::move(*it));
+					std::optional<Details::Task> result(std::move(*it));
 					pending_tasks.erase(it);
 					return result;
-				}
-				if (ok_stream && it->preserve_order_in_execution_stream.IsValid())
-				{
-					it->preserve_order_in_execution_stream.MarkOnMask(unusable_streams);
 				}
 			}
 			return {};
@@ -262,136 +289,80 @@ namespace ECS
 			bool result = false;
 			do
 			{
-				{
-					std::lock_guard<std::mutex> guard(mutex);
-					main_thread_task = FindTaskToExecute_Unguarded();
-				}
-
-				if (main_thread_task.has_value())
-				{
-					LOG(printf_s("ECS main thread found '%s' stream: %d \n"
-						, Str(main_thread_task->stat_id), main_thread_task->preserve_order_in_execution_stream.index);)
-					{
-						STAT(ScopeDurationLog __sdl(main_thread_task->stat_id);)
-						main_thread_task->func(*this, main_thread_task->per_entity_function);
-					}
-					auto optional_notifier = main_thread_task->optional_notifier;
-					{
-						std::lock_guard<std::mutex> guard(mutex);
-						main_thread_task = {};
-					}
-					if (optional_notifier)
-					{
-						optional_notifier->Open();
-					}
-					result = true;
-				}
-				else
-				{
+				const bool bExecuted = WorkerThread::TryExecuteTask(main_thread_task, *this LOG_PARAM(-1));
+				if(!bExecuted)
 					break;
-				}
 			}
 			while(!bSingleJob);
 			return result;
 		}
-
-		template<typename TFilter = typename Filter<> STAT_PARAM(typename TStatType), typename... TDecoratedComps>
-		void CallAsync(void(*func)(EntityId, TDecoratedComps...)
-			, ExecutionStreamId preserve_order_in_execution_stream
-			, ThreadGate* optional_notifier
-			STAT_PARAM(TStatType in_stat_id))
+		void ResetCompletedTasks()
 		{
-			assert(debug_lock);
+			completed_tasks.reset();
+		}
+
+		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
+		void CallAsync(void(*func)(EntityId, TDecoratedComps...)
+			, ExecutionNodeId node_id
+			, ExecutionNodeId::Mask requiried_completed_tasks = {}
+			, ThreadGate* optional_notifier = nullptr)
+		{
+			assert(node_id.IsValid());
 			//We can ignore filter in the following masks:
 			constexpr Details::ComponentCache read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst>::Build<TDecoratedComps...>();
 			constexpr Details::ComponentCache mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
 			static_assert((read_only_components & mutable_components).none(), "");
 
-			InnerSyncFunc inner_func = &Details::CallGeneric<TFilter, TDecoratedComps...>;
+			Details::InnerSyncFunc inner_func = &Details::CallGeneric<TFilter, TDecoratedComps...>;
 			void* per_entity_func = func;
-			STAT(StatId stat_id = static_cast<StatId>(in_stat_id);)
 			{
 				std::lock_guard<std::mutex> guard(mutex);
-				pending_tasks.push_back(Task{ inner_func
+				pending_tasks.push_back(Details::Task{ inner_func
 					, per_entity_func
+					, nullptr
 					, read_only_components
 					, mutable_components
-					, preserve_order_in_execution_stream
-					, optional_notifier 
-					STAT_PARAM(stat_id) });
+					, requiried_completed_tasks
+					, node_id
+					, optional_notifier });
 			}
 
-			LOG(printf_s("ECS new async task: '%s'\n", Str(stat_id));)
+			LOG(printf_s("ECS new async task: '%s'\n", Str(node_id.GetIndex()));)
 
 			new_task_cv.notify_one();
 		}
 
-		template<typename... TArgsA> friend struct OverlapsContext;
-	};
-
-	template<typename... TArgsA>
-	struct OverlapsContext
-	{
-		ECSManagerAsync& manager;
-		OverlapsContext(ECSManagerAsync& m) : manager(m) {}
-
-		//SpatialManager
-			// TIter GetIter(EntityId, TPosComp, TSizeComp)
-			// TIter -> TOptional<EntityId>
-
-		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename TPositionComponent, typename TSizeComponent, typename TSpatialManager, typename... TArgsB>
-		void Call(void(*func)(EntityId, const TPositionComponent&, const TSizeComponent&, TArgsA..., EntityId, TArgsB...), const TSpatialManager& spatial_manager)
+		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename THolder, typename... TDComps1, typename... TDComps2>
+		void CallAsyncOverlap(THolder(*first_pass)(EntityId, TDComps1...)
+			, void(*second_pass)(THolder&, EntityId, TDComps2...)
+			, ExecutionNodeId node_id
+			, ExecutionNodeId::Mask requiried_completed_tasks = {}
+			, ThreadGate* optional_notifier = nullptr)
 		{
-			assert(manager.debug_lock);
-			using namespace Details;
+			assert(node_id.IsValid());
+			//We can ignore filter in the following masks:
+			constexpr Details::ComponentCache read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst  >::Build<TDComps1..., TDComps2...>();
+			constexpr Details::ComponentCache mutable_components   = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDComps1..., TDComps2...>();
+			static_assert((read_only_components & mutable_components).none(), "");
 
-			constexpr ComponentCache kFilterB = TFilterB::Get() | FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TArgsB...>();
-			constexpr ComponentCache kFilterA = TFilterA::Get() | FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TArgsA...>()
-				| TPositionComponent::GetComponentCache() | TSizeComponent::GetComponentCache();
-			using IndexOfParam = IndexOfIterParameter<TPositionComponent, TSizeComponent, TArgsA...>;
-			constexpr auto kArrSizeA = NumCachedIter<TPositionComponent, TSizeComponent, typename RemoveDecorators<TArgsA>::type...>();
-			std::array<TCacheIter, kArrSizeA> cached_iters_a = { 0 };
-
-			/*
-			if constexpr ((sizeof...(TArgsA) > 0))
+			using TFuncPtr_FP = typename std::add_pointer_t<THolder(EntityId, TDComps1...)>;
+			using TFuncPtr_SP = typename std::add_pointer_t<void(THolder&, EntityId, TDComps2...)>;
+			Details::InnerSyncFunc inner_func = &Details::CallGeneric2<TFilterA, TFilterB, THolder, TFuncPtr_FP, TFuncPtr_SP>;
 			{
-				using Head = typename Split<TDecoratedComps...>::Head;
-				using HeadContainer = typename RemoveDecorators<Head>::type::Container;
-				if constexpr (HeadContainer::kUseAsFilter && !std::is_pointer_v<Head>)
-				{
-					for (auto& it : RemoveDecorators<Head>::type::GetContainer().GetCollection())
-					{
-						const EntityId id_a(it.first);
-						const auto& entity_a = entities.GetChecked(id_a);
-						if (entity_a.PassFilter(kFilterA))
-						{
-							const TPositionComponent& pos_a = Unbox<const TPositionComponent&, IndexOfParam::template Get<TPositionComponent>()>::Get(id_a, cached_iters_a, entity_a.GetCache());
-							const TSizeComponent& size_a = Unbox<const TSizeComponent&, IndexOfParam::template Get<TSizeComponent>()>::Get(id_a, cached_iters_a, entity_a.GetCache());
-						}
-					}
-					return;
-				}
+				std::lock_guard<std::mutex> guard(mutex);
+				pending_tasks.push_back(Details::Task{ inner_func
+					, first_pass
+					, second_pass
+					, read_only_components
+					, mutable_components
+					, requiried_completed_tasks
+					, node_id
+					, optional_notifier });
 			}
-			*/
 
-			for (EntityId id_a = manager.entities.GetNext({}, kFilterA); id_a.IsValidForm(); id_a = manager.entities.GetNext(id_a, kFilterA))
-			{
-				const auto& entity_a = manager.entities.GetChecked(id_a);
-				const TPositionComponent& pos_a = Unbox<const TPositionComponent&, IndexOfParam::template Get<TPositionComponent>()>::Get(id_a, cached_iters_a, entity_a.GetCache());
-				const TSizeComponent& size_a = Unbox<const TSizeComponent&, IndexOfParam::template Get<TSizeComponent>()>::Get(id_a, cached_iters_a, entity_a.GetCache());
-				for (auto iter = spatial_manager.GetIter(id_a, pos_a, size_a); iter; iter++)
-				{
-					const EntityId id_b = *iter;
-					const auto& entity_b = manager.entities.GetChecked(id_b);
-					if (entity_b.PassFilter(kFilterB))
-					{
-						func(id_a, pos_a, size_a, Unbox<TArgsA, IndexOfParam::template Get<TArgsA>()>::Get(id_a, cached_iters_a, entity_a.GetCache())...
-							, id_b, UnboxSimple<TArgsB>::Get(id_b, entity_b.GetCache())...);
-					}
-				}
-			}
+			LOG(printf_s("ECS new async task: '%s'\n", Str(node_id.GetIndex()));)
+			new_task_cv.notify_one();
 		}
+
 	};
-
-
 }

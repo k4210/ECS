@@ -50,7 +50,31 @@ void GameMovement_Update(ECS::EntityId id
 	}
 }
 
-void Animation_Update(ECS::EntityId id, Animation& anim, const Velocity& vel)
+void TestOverlap1(ECS::EntityId id_a, const Position& pos_a, const CircleSize& size_a, Velocity& vel_a
+	, ECS::EntityId id_b, Velocity& vel_b)
 {
+	int k = 0; k++;
+}
 
+struct TestOverlap_Holder
+{
+	ECS::EntityId id;
+	const Position& pos; 
+	const CircleSize& size; 
+	Velocity& vel;
+
+	QuadTree::Iter GetIter() const
+	{
+		return GResource::inst->quad_tree.GetIter(id, pos, size);
+	}
+};
+
+TestOverlap_Holder TestOverlap_FirstPass(ECS::EntityId id, const Position& pos, const CircleSize& size, Velocity& vel)
+{
+	return TestOverlap_Holder{ id, pos, size, vel };
+}
+
+void TestOverlap_SecondPass(TestOverlap_Holder& first_pass, ECS::EntityId id, const Position& pos, const CircleSize& size)
+{
+	int k = 0; k++;
 }

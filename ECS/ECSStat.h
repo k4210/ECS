@@ -7,7 +7,7 @@
 
 #ifndef NDEBUG
 #define ECS_STAT_ENABLED 1
-#define ECS_LOG_ENABLED 1
+#define ECS_LOG_ENABLED 0
 #else
 #define ECS_STAT_ENABLED 0
 #define ECS_LOG_ENABLED 0
@@ -130,6 +130,8 @@ namespace ECS
 #if ECS_LOG_ENABLED
 static_assert(ECS_STAT_ENABLED, "");
 #define LOG(x) x
+#define LOG_PARAM(x) , x
 #else
 #define LOG(x)
+#define LOG_PARAM(x)
 #endif

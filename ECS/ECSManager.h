@@ -26,9 +26,7 @@ namespace ECS
 			constexpr bool IsEmpty() const { return components_cache.none(); }
 			constexpr bool PassFilter(const Details::ComponentCache& filter) const
 			{
-				return Bitset2::zip_fold_and(filter, components_cache,
-					[](Details::ComponentCache::base_t v1, Details::ComponentCache::base_t v2) noexcept
-				{ return (v1 & ~v2) == 0; }); // Any bit unset in v2 must not be set in v1
+				return IsSubSetOf(filter, components_cache);
 			}
 			constexpr bool HasComponent(int ComponentId) const { return components_cache.test(ComponentId); }
 			template<typename TComponent> constexpr bool HasComponent() const
@@ -249,12 +247,9 @@ namespace ECS
 			using HeadComponent = typename RemoveDecorators<Head>::type;
 			using HeadContainer = typename HeadComponent::Container;
 			using IndexOfParam = IndexOfIterParameter<TDecoratedComps...>;
-
 			constexpr auto kArrSize = NumCachedIter<typename RemoveDecorators<TDecoratedComps>::type...>();
 			std::array<TCacheIter, kArrSize> cached_iters = { 0 };
-
-			constexpr ComponentCache kFilter = TFilter::Get()
-				| FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TDecoratedComps...>();
+			constexpr ComponentCache kFilter = TFilter::Get() | FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TDecoratedComps...>();
 
 			if constexpr (HeadContainer::kUseAsFilter && !std::is_pointer_v<Head>)
 			{
@@ -273,7 +268,60 @@ namespace ECS
 			{
 				for (EntityId id = entities.GetNext({}, kFilter); id.IsValidForm(); id = entities.GetNext(id, kFilter))
 				{
-					func(id, Unbox<TDecoratedComps, IndexOfParam::template Get<TDecoratedComps>()>::Get(id, cached_iters, entities.GetChecked(id).GetCache())...);
+					const auto& entity = entities.GetChecked(id);
+					func(id, Unbox<TDecoratedComps, IndexOfParam::template Get<TDecoratedComps>()>::Get(id, cached_iters, entity.GetCache())...);
+				}
+			}
+		}
+
+		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename THolder, typename... TDComps1, typename... TDComps2>
+		void CallOverlap(THolder(*first_pass)(EntityId, TDComps1...), void(*second_pass)(THolder&, EntityId, TDComps2...))
+		{
+			using namespace Details;
+			auto handle_second_pass = [&](THolder& holder) -> void
+			{
+				constexpr ComponentCache kFilter = TFilterB::Get() | FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TDComps2...>();
+				for (auto iter = holder.GetIter(); iter; iter++)
+				{
+					const EntityId id = *iter;
+					const auto& entity = entities.GetChecked(id);
+					if (entity.PassFilter(kFilter))
+					{
+						second_pass(holder, id, UnboxSimple<TDComps2>::Get(id, entity.GetCache())...);
+					}
+				}
+			};
+
+			assert(debug_lock);
+			using Head = typename Split<TDComps1...>::Head;
+			using HeadComponent = typename RemoveDecorators<Head>::type;
+			using HeadContainer = typename HeadComponent::Container;
+			using IndexOfParam = IndexOfIterParameter<TDComps1...>;
+			constexpr auto kArrSize = NumCachedIter<typename RemoveDecorators<TDComps1>::type...>();
+			std::array<TCacheIter, kArrSize> cached_iters = { 0 };
+			constexpr ComponentCache kFilter = TFilterA::Get() | FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TDComps1...>();
+
+			if constexpr (HeadContainer::kUseAsFilter && !std::is_pointer_v<Head>)
+			{
+				for (auto& it : HeadComponent::GetContainer().GetCollection())
+				{
+					const EntityId id(it.first);
+					const auto& entity = entities.GetChecked(id);
+					if (entity.PassFilter(kFilter))
+					{
+						HeadComponent& head_comp = it.second;
+						THolder holder = first_pass(id, Unbox<TDComps1, IndexOfParam::template Get<TDComps1>()>::Get(id, cached_iters, entity.GetCache(), head_comp)...);
+						handle_second_pass(holder);
+					}
+				}
+			}
+			else
+			{
+				for (EntityId id = entities.GetNext({}, kFilter); id.IsValidForm(); id = entities.GetNext(id, kFilter))
+				{
+					const auto& entity = entities.GetChecked(id);
+					THolder holder = first_pass(id, Unbox<TDComps1, IndexOfParam::template Get<TDComps1>()>::Get(id, cached_iters, entity.GetCache())...);
+					handle_second_pass(holder);
 				}
 			}
 		}
