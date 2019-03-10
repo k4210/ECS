@@ -49,3 +49,8 @@ void GameMovement_Update(ECS::EntityId id
 		pos.pos += vel.velocity * 100.0f * GResource::inst->frame_time_seconds;
 	}
 }
+
+void Animation_Update(ECS::EntityId id, Animation& anim, const Velocity& vel)
+{
+
+}

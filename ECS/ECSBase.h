@@ -58,9 +58,17 @@ namespace ECS
 		operator EntityId() const { return id; }
 	};
 
+	template<size_t N, class T>
+	constexpr bool AnyCommonBit(Bitset2::bitset2<N, T> const &bs1, Bitset2::bitset2<N, T> const &bs2)
+	{
+		return Bitset2::zip_fold_or(bs1, bs2, [](T v1, T v2) { return 0 != (v1 & v2); });
+	}
+
 	namespace Details
 	{
 		using TCacheIter = unsigned int;
+
+		using ComponentCache = Bitset2::bitset2<kMaxComponentTypeNum>;
 
 		template<int T, bool TIsEmpty> struct AnyComponentBase
 		{
@@ -69,6 +77,11 @@ namespace ECS
 			static_assert(kComponentTypeIdx < kActuallyImplementedComponents, "not implemented component");
 
 			static const constexpr bool kIsEmpty = TIsEmpty;
+
+			constexpr static ComponentCache GetComponentCache()
+			{
+				return ComponentCache{ 1 } << kComponentTypeIdx;
+			}
 		};
 
 		template<int T> struct ComponentBase : public Details::AnyComponentBase<T, false>
@@ -83,8 +96,6 @@ namespace ECS
 			constexpr static const bool kUseCachedIter = TUseCachedIter;
 			constexpr static const bool kUseAsFilter = TUseCachedIter;
 		};
-
-		using ComponentCache = Bitset2::bitset2<kMaxComponentTypeNum>;
 
 		template<typename THead, typename... TTail>
 		struct Split
@@ -118,7 +129,7 @@ namespace ECS
 				{
 					return ComponentCache{};
 				}
-				return ComponentCache{ 1 } << RemoveDecorators<TComp>::type::kComponentTypeIdx;
+				return RemoveDecorators<TComp>::type::GetComponentCache();
 			}
 
 			template<typename TCompHead, typename... TCompsTail>
@@ -145,11 +156,9 @@ namespace ECS
 			return  ((TComps::Container::kUseCachedIter ? 1 : 0) + ... + 0);
 		}
 
-		template<class TComp, int TIndex>
-		struct Unbox {};
+		template<class TComp, int TIndex> struct Unbox {};
 
-		template<class TComp, int TIndex>
-		struct Unbox<TComp&, TIndex>
+		template<class TComp, int TIndex> struct Unbox<TComp&, TIndex>
 		{
 			template<typename TArr> static TComp& Get(EntityId id, TArr& arr, const ComponentCache&)
 			{
@@ -159,10 +168,18 @@ namespace ECS
 				}
 				return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id);
 			}
+
+			template<typename TArr, typename TKnownComp> static TComp& Get(EntityId id, TArr& arr, const ComponentCache& dummy, TKnownComp& known_comp)
+			{
+				if constexpr (std::is_same_v<RemoveDecorators<TComp>::type, TKnownComp>)
+				{
+					return known_comp;
+				}
+				return Get<TArr>(id, arr, dummy);
+			}
 		};
 
-		template<class TDecoratedComp, int TIndex>
-		struct Unbox<TDecoratedComp*, TIndex>
+		template<class TDecoratedComp, int TIndex> struct Unbox<TDecoratedComp*, TIndex>
 		{
 			template<typename TArr> static TDecoratedComp* Get(EntityId id, TArr& arr, const ComponentCache& component_cache)
 			{
@@ -173,10 +190,14 @@ namespace ECS
 				}
 				return nullptr;
 			}
+
+			template<typename TArr, typename TKnownComp> static TDecoratedComp* Get(EntityId id, TArr& arr, const ComponentCache& component_cache, TKnownComp&)
+			{
+				return Get<TArr>(id, arr, component_cache);
+			}
 		};
 
-		template<typename THead, typename... TTail>
-		struct IndexOfIterParameterInner
+		template<typename THead, typename... TTail> struct IndexOfIterParameterInner
 		{
 			template<typename T>
 			constexpr static int Get()
@@ -187,8 +208,7 @@ namespace ECS
 			}
 		};
 
-		template<typename THead>
-		struct IndexOfIterParameterInner<THead>
+		template<typename THead> struct IndexOfIterParameterInner<THead>
 		{
 			template<typename T>
 			constexpr static int Get()
@@ -197,8 +217,7 @@ namespace ECS
 			}
 		};
 
-		template<typename... TComps>
-		struct IndexOfIterParameter
+		template<typename... TComps> struct IndexOfIterParameter
 		{
 			template<typename T>
 			constexpr static int Get()
@@ -214,14 +233,26 @@ namespace ECS
 			}
 		};
 
-		template<size_t N, class T>
-		bool AnyCommonBit(Bitset2::bitset2<N, T> const &bs1, Bitset2::bitset2<N, T> const &bs2)
+		template<class TComp> struct UnboxSimple {};
+
+		template<class TComp> struct UnboxSimple<TComp&>
 		{
-			using base_t = T;
-			return Bitset2::zip_fold_or(bs1, bs2,
-				[](base_t v1, base_t v2) noexcept
-			{ return 0 != (v1 & v2); });
-		}
+			static TComp& Get(EntityId id, const ComponentCache&)
+			{
+				return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id);
+			}
+		};
+
+		template<class TDComp> struct UnboxSimple<TDComp*>
+		{
+			static TDComp* Get(EntityId id, const ComponentCache& entity_components)
+			{
+				using TComp = typename RemoveDecorators<TDComp>::type;
+				return entity_components.test(TComp::kComponentTypeIdx)
+					? &TComp::GetContainer().GetChecked(id)
+					: nullptr;
+			}
+		};
 	}
 
 	template<int T> struct EmptyComponent : public Details::AnyComponentBase<T, true> {};

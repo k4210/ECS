@@ -199,9 +199,9 @@ namespace ECS
 			for (auto it = pending_tasks.begin(); it != pending_tasks.end(); it++)
 			{
 				const bool ok_stream = !it->preserve_order_in_execution_stream.Test(unusable_streams);
-				const bool ok_components = !Details::AnyCommonBit(it->mutable_components, currently_read_only_components)
-					&& !Details::AnyCommonBit(it->read_only_components, currently_mutable_components)
-					&& !Details::AnyCommonBit(it->mutable_components, currently_mutable_components);
+				const bool ok_components = !AnyCommonBit(it->mutable_components, currently_read_only_components)
+					&& !AnyCommonBit(it->read_only_components, currently_mutable_components)
+					&& !AnyCommonBit(it->mutable_components, currently_mutable_components);
 				if (ok_stream && ok_components)
 				{
 					std::optional<Task> result(std::move(*it));
@@ -325,5 +325,73 @@ namespace ECS
 
 			new_task_cv.notify_one();
 		}
+
+		template<typename... TArgsA> friend struct OverlapsContext;
 	};
+
+	template<typename... TArgsA>
+	struct OverlapsContext
+	{
+		ECSManagerAsync& manager;
+		OverlapsContext(ECSManagerAsync& m) : manager(m) {}
+
+		//SpatialManager
+			// TIter GetIter(EntityId, TPosComp, TSizeComp)
+			// TIter -> TOptional<EntityId>
+
+		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename TPositionComponent, typename TSizeComponent, typename TSpatialManager, typename... TArgsB>
+		void Call(void(*func)(EntityId, const TPositionComponent&, const TSizeComponent&, TArgsA..., EntityId, TArgsB...), const TSpatialManager& spatial_manager)
+		{
+			assert(manager.debug_lock);
+			using namespace Details;
+
+			constexpr ComponentCache kFilterB = TFilterB::Get() | FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TArgsB...>();
+			constexpr ComponentCache kFilterA = TFilterA::Get() | FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TArgsA...>()
+				| TPositionComponent::GetComponentCache() | TSizeComponent::GetComponentCache();
+			using IndexOfParam = IndexOfIterParameter<TPositionComponent, TSizeComponent, TArgsA...>;
+			constexpr auto kArrSizeA = NumCachedIter<TPositionComponent, TSizeComponent, typename RemoveDecorators<TArgsA>::type...>();
+			std::array<TCacheIter, kArrSizeA> cached_iters_a = { 0 };
+
+			/*
+			if constexpr ((sizeof...(TArgsA) > 0))
+			{
+				using Head = typename Split<TDecoratedComps...>::Head;
+				using HeadContainer = typename RemoveDecorators<Head>::type::Container;
+				if constexpr (HeadContainer::kUseAsFilter && !std::is_pointer_v<Head>)
+				{
+					for (auto& it : RemoveDecorators<Head>::type::GetContainer().GetCollection())
+					{
+						const EntityId id_a(it.first);
+						const auto& entity_a = entities.GetChecked(id_a);
+						if (entity_a.PassFilter(kFilterA))
+						{
+							const TPositionComponent& pos_a = Unbox<const TPositionComponent&, IndexOfParam::template Get<TPositionComponent>()>::Get(id_a, cached_iters_a, entity_a.GetCache());
+							const TSizeComponent& size_a = Unbox<const TSizeComponent&, IndexOfParam::template Get<TSizeComponent>()>::Get(id_a, cached_iters_a, entity_a.GetCache());
+						}
+					}
+					return;
+				}
+			}
+			*/
+
+			for (EntityId id_a = manager.entities.GetNext({}, kFilterA); id_a.IsValidForm(); id_a = manager.entities.GetNext(id_a, kFilterA))
+			{
+				const auto& entity_a = manager.entities.GetChecked(id_a);
+				const TPositionComponent& pos_a = Unbox<const TPositionComponent&, IndexOfParam::template Get<TPositionComponent>()>::Get(id_a, cached_iters_a, entity_a.GetCache());
+				const TSizeComponent& size_a = Unbox<const TSizeComponent&, IndexOfParam::template Get<TSizeComponent>()>::Get(id_a, cached_iters_a, entity_a.GetCache());
+				for (auto iter = spatial_manager.GetIter(id_a, pos_a, size_a); iter; iter++)
+				{
+					const EntityId id_b = *iter;
+					const auto& entity_b = manager.entities.GetChecked(id_b);
+					if (entity_b.PassFilter(kFilterB))
+					{
+						func(id_a, pos_a, size_a, Unbox<TArgsA, IndexOfParam::template Get<TArgsA>()>::Get(id_a, cached_iters_a, entity_a.GetCache())...
+							, id_b, UnboxSimple<TArgsB>::Get(id_b, entity_b.GetCache())...);
+					}
+				}
+			}
+		}
+	};
+
+
 }

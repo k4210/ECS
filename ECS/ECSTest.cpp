@@ -57,12 +57,10 @@ void Test_0()
 	assert(0 == ecs.GetNumEntities());
 	const EntityHandle id0 = ecs.AddEntity();
 	assert(id0.IsValidForm());
-	assert(0 == id0.id.index);//
 	assert(ecs.IsValidEntity(id0));
 	assert(1 == ecs.GetNumEntities());
 	const EntityHandle id1 = ecs.AddEntity(100);
 	assert(id1.IsValidForm());
-	assert(100 == id1.id.index);//
 	assert(ecs.IsValidEntity(id1));
 	assert(2 == ecs.GetNumEntities());
 	assert(ecs.IsValidEntity(id1));

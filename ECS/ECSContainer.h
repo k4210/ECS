@@ -14,7 +14,7 @@ namespace ECS
 		TComponent components[kMaxEntityNum];
 
 	public:
-		TComponent & Add(EntityId id)
+		TComponent& Add(EntityId id)
 		{
 			components[id].Initialize();
 			return components[id];
@@ -52,8 +52,8 @@ namespace ECS
 
 		constexpr TComponent& Add(EntityId id)
 		{
-			auto it = DesiredPositionSearch(id.index);
-			auto new_it = components.insert(it, { id.index, TComponent{} });
+			auto it = DesiredPositionSearch(id);
+			auto new_it = components.insert(it, TPair{ id, TComponent{} });
 			new_it->second.Initialize();
 			return new_it->second;
 		}
@@ -68,8 +68,8 @@ namespace ECS
 
 		TComponent& GetChecked(EntityId id)
 		{
-			auto it = DesiredPositionSearch(id.index);
-			assert((it != components.end()) && (it->first == id.index));
+			auto it = DesiredPositionSearch(id);
+			assert((it != components.end()) && (it->first == id));
 			return it->second;
 		}
 
@@ -79,24 +79,24 @@ namespace ECS
 			{
 				if constexpr(kUseBinarySearch)
 				{
-					return DesiredPositionSearch(id.index, cached_iter);
+					return DesiredPositionSearch(id, cached_iter);
 				}
 				else
 				{
 					auto it = components.begin() + cached_iter;
 					for (;it != components.end(); it++)
 					{
-						if (it->first == id.index)
+						if (it->first == id)
 						{
 							break;
 						}
-						assert(it->first < id.index);
+						assert(it->first < id);
 					}
 					return it;
 				}
 			}();
 
-			assert((it != components.end()) && (it->first == id.index));
+			assert((it != components.end()) && (it->first == id));
 			cached_iter = static_cast<Details::TCacheIter>(std::distance(components.begin(), it) + 1);
 			return it->second;
 		}
