@@ -73,6 +73,8 @@ namespace ECS
 			return m;
 		}
 
+		operator Mask() const { return M(); }
+
 		constexpr bool Test(const Mask& mask) const
 		{
 			return IsValid() ? mask.test(index) : false;
@@ -290,7 +292,9 @@ namespace ECS
 			do
 			{
 				const bool bExecuted = WorkerThread::TryExecuteTask(main_thread_task, *this LOG_PARAM(-1));
-				if(!bExecuted)
+				if(bExecuted) 
+					result = true;
+				else 
 					break;
 			}
 			while(!bSingleJob);

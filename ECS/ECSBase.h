@@ -40,6 +40,16 @@ namespace ECS
 		constexpr bool IsValidForm() const { return index >= 0 && index < kMaxEntityNum; }
 
 		constexpr operator TIndex() const { return index; }
+
+		constexpr bool operator < (const EntityId& other) const
+		{
+			return index < other.index;
+		}
+
+		constexpr bool operator== (const EntityId& other) const
+		{
+			return index == other.index;
+		}
 	};
 
 	struct EntityHandle

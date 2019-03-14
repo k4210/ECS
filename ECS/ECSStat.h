@@ -9,7 +9,7 @@
 #define ECS_STAT_ENABLED 1
 #define ECS_LOG_ENABLED 0
 #else
-#define ECS_STAT_ENABLED 0
+#define ECS_STAT_ENABLED 1
 #define ECS_LOG_ENABLED 0
 #endif
 
@@ -61,7 +61,9 @@ namespace ECS
 		static void Add(StatId record_index, std::chrono::microseconds duration_time)
 		{
 			const auto microseconds = duration_time.count();
-			Record& record = records[static_cast<int>(record_index + 1)];
+			const int64_t num_of_inner_stats = 1;
+			const int64_t actual_idx = static_cast<int64_t>(record_index) + num_of_inner_stats;
+			Record& record = records[actual_idx];
 			record.calls++;
 			record.sum += microseconds;
 			if(microseconds > record.max)
@@ -76,7 +78,7 @@ namespace ECS
 				Record& record = records[i]; 
 				if (record.calls > 0)
 				{
-					constexpr float to_ms = 1.0f/1000.0f;
+					constexpr double to_ms = 1.0/1000.0;
 					printf_s("Stat %2i %-28s avg per call: %7.3f avg per frame: %7.3f max: %7.3f calls per frame: %7.3f\n"
 						, i-1, Str(i-1)
 						, record.sum * to_ms / record.calls

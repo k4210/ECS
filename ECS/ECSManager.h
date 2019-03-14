@@ -3,6 +3,7 @@
 #include "ECSBase.h"
 #include <array>
 #include <atomic>
+#include "malloc.h"
 
 namespace ECS
 {
@@ -107,7 +108,7 @@ namespace ECS
 			void RemoveChecked(EntityId id)
 			{
 				cached_number--;
-				if (id == actual_max_entity_id)
+				if (actual_max_entity_id == id)
 				{
 					int iter = id - 1;
 					for (;(iter >= 0) && !free_entities.test(iter); iter--) {}
@@ -277,14 +278,16 @@ namespace ECS
 		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename THolder, typename... TDComps1, typename... TDComps2>
 		void CallOverlap(THolder(*first_pass)(EntityId, TDComps1...), void(*second_pass)(THolder&, EntityId, TDComps2...))
 		{
+			std::vector<uint8_t> memory(512, 0); 
+
 			using namespace Details;
 			auto handle_second_pass = [&](THolder& holder) -> void
 			{
 				constexpr ComponentCache kFilter = TFilterB::Get() | FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TDComps2...>();
-				for (auto iter = holder.GetIter(); iter; iter++)
+				for (auto iter = holder.GetIter(memory); iter; iter++)
 				{
 					const EntityId id = *iter;
-					const auto& entity = entities.GetChecked(id);
+					const Entity& entity = entities.GetChecked(id);
 					if (entity.PassFilter(kFilter))
 					{
 						second_pass(holder, id, UnboxSimple<TDComps2>::Get(id, entity.GetCache())...);

@@ -3,6 +3,16 @@
 #include "Components.h"
 #include "GameBase.h"
 
+static QuadTree::Region ToRegion(const Position& pos, const CircleSize& size)
+{
+	const float position_offset = 64;
+	return QuadTree::Region{
+		static_cast<uint8_t>((position_offset + pos.pos.x - size.radius) / QuadTree::kQuadPixelSize),
+		static_cast<uint8_t>((position_offset + pos.pos.y - size.radius) / QuadTree::kQuadPixelSize),
+		static_cast<uint8_t>(1 + ((position_offset + pos.pos.x + size.radius) / QuadTree::kQuadPixelSize)),
+		static_cast<uint8_t>(1 + ((position_offset + pos.pos.y + size.radius) / QuadTree::kQuadPixelSize)) };
+}
+
 void GraphicSystem_Update(ECS::EntityId id
 	, const Position& pos
 	, const CircleSize& size
@@ -26,6 +36,9 @@ class OutOfBoardEvent : public ECS::IEvent
 public:
 	void Execute()
 	{
+		auto& ecs = GResource::inst->ecs;
+		QuadTree::Region region = ToRegion(ecs.GetComponent<Position>(entity), ecs.GetComponent<CircleSize>(entity));
+		GResource::inst->quad_tree.Remove(entity, region);
 		GResource::inst->ecs.RemoveEntity(entity);
 	}
 	OutOfBoardEvent(ECS::EntityHandle eh) : entity(eh) {}
@@ -36,24 +49,25 @@ void GameMovement_Update(ECS::EntityId id
 	, Velocity& vel
 	, const CircleSize& size)
 {
-	if ((	(pos.pos.x + size.radius) < 0	&& vel.velocity.x < 0)
-		|| ((pos.pos.x - size.radius) > 800 && vel.velocity.x > 0)
-		|| ((pos.pos.y + size.radius) < 0   && vel.velocity.y < 0)
-		|| ((pos.pos.y - size.radius) > 600 && vel.velocity.y > 0))
+	if (	((pos.pos.x - size.radius) < 0	 && vel.velocity.x < 0)
+		||	((pos.pos.x + size.radius) > 800 && vel.velocity.x > 0))
 	{
-		const auto eh = GResource::inst->ecs.GetHandle(id);
-		GResource::inst->event_manager.Push(ECS::EventStorage::Create<OutOfBoardEvent>(eh));
+		vel.velocity.x = -vel.velocity.x;
 	}
-	else
+	if(		((pos.pos.y - size.radius) < 0   && vel.velocity.y < 0)
+		||	((pos.pos.y + size.radius) > 600 && vel.velocity.y > 0))
 	{
+		//const auto eh = GResource::inst->ecs.GetHandle(id);
+		//GResource::inst->event_manager.Push(ECS::EventStorage::Create<OutOfBoardEvent>(eh));
+		vel.velocity.y = -vel.velocity.y;
+	}
+	
+	{
+		auto& qt = GResource::inst->quad_tree;
+		qt.Remove(id, ToRegion(pos, size));
 		pos.pos += vel.velocity * 100.0f * GResource::inst->frame_time_seconds;
+		qt.Add(id, ToRegion(pos, size));
 	}
-}
-
-void TestOverlap1(ECS::EntityId id_a, const Position& pos_a, const CircleSize& size_a, Velocity& vel_a
-	, ECS::EntityId id_b, Velocity& vel_b)
-{
-	int k = 0; k++;
 }
 
 struct TestOverlap_Holder
@@ -63,18 +77,31 @@ struct TestOverlap_Holder
 	const CircleSize& size; 
 	Velocity& vel;
 
-	QuadTree::Iter GetIter() const
+	QuadTree::Region region;
+	QuadTree::Iter GetIter(std::vector<uint8_t>& in_memory) const
 	{
-		return GResource::inst->quad_tree.GetIter(id, pos, size);
+		assert(region.IsValid());
+		return QuadTree::Iter(id, region, GResource::inst->quad_tree, in_memory);
 	}
 };
 
 TestOverlap_Holder TestOverlap_FirstPass(ECS::EntityId id, const Position& pos, const CircleSize& size, Velocity& vel)
 {
-	return TestOverlap_Holder{ id, pos, size, vel };
+	return TestOverlap_Holder{ id, pos, size, vel, ToRegion(pos, size) };
 }
 
-void TestOverlap_SecondPass(TestOverlap_Holder& first_pass, ECS::EntityId id, const Position& pos, const CircleSize& size)
+void TestOverlap_SecondPass(TestOverlap_Holder& first_pass, ECS::EntityId id, const Position& pos, const CircleSize& size, Velocity& vel)
 {
-	int k = 0; k++;
+	const sf::Vector2f diff = (pos.pos - first_pass.pos.pos);
+	const float dist_sq = diff.x * diff.x + diff.y * diff.y;
+	const float radius_sum_sq = (first_pass.size.radius + size.radius) * (first_pass.size.radius + size.radius);
+	
+	const float update_time = GResource::inst->frame_time_seconds * 100.0f;
+	const sf::Vector2f next_diff = diff + (vel.velocity - first_pass.vel.velocity) * update_time;
+	const float next_dist_sq = next_diff.x * next_diff.x + next_diff.y * next_diff.y;
+
+	if ((dist_sq < radius_sum_sq) && (next_dist_sq < dist_sq))
+	{
+		std::swap(first_pass.vel.velocity, vel.velocity);
+	}
 }

@@ -35,15 +35,20 @@ void InitializeGame()
 {
 	auto& inst = *GResource::inst;
 	const float pi = acosf(-1);
-	for (int i = 0; i < 20; i++)
+	for (int j = 0; j < 20; j++)
 	{
-		const auto e = inst.ecs.AddEntity();
-		inst.ecs.AddComponent<Position>(e).pos = sf::Vector2f(i * 800 / 20.0f, i * 600 / 20.0f);
-		inst.ecs.AddComponent<CircleSize>(e).radius = 15;
-		inst.ecs.AddComponent<Sprite2D>(e).shape.setFillColor(sf::Color::Green);
-		const float angle = pi * 2.0f * (i + 1) / 22.0f;
-		inst.ecs.AddComponent<Velocity>(e).velocity = sf::Vector2f(sinf(angle), cosf(angle));
-		inst.ecs.AddComponent<Animation>(e);
+		for (int i = 0; i < 20; i++)
+		{
+			const auto e = inst.ecs.AddEntity();
+			inst.ecs.AddComponent<Position>(e).pos = sf::Vector2f(i * 800 / 20.0f, j * 600 / 20.0f);
+			inst.ecs.AddComponent<CircleSize>(e).radius = 10;
+			inst.ecs.AddComponent<Sprite2D>(e).shape.setFillColor(sf::Color::Green);
+			const float angle = pi * 2.0f * (i + 1) / 22.0f;
+			inst.ecs.AddComponent<Velocity>(e).velocity = sf::Vector2f(sinf(angle), cosf(angle));
+			inst.ecs.AddComponent<Animation>(e);
+
+			inst.quad_tree.Add(e, ToRegion(inst.ecs.GetComponent<Position>(e), inst.ecs.GetComponent<CircleSize>(e)));
+		}
 	}
 }
 
@@ -73,9 +78,8 @@ void MainLoopBody()
 	{
 		ECS::DebugLockScope __dls(inst.ecs);
 		inst.ecs.CallAsync(&GraphicSystem_Update, EExecutionNode::Graphic_Update, {}, &inst.wait_for_graphic_update);
-		inst.ecs.CallAsync(&GameMovement_Update, EExecutionNode::Movement_Update);
-
-		inst.ecs.CallAsyncOverlap(&TestOverlap_FirstPass, &TestOverlap_SecondPass, EExecutionNode::TestOverlap, EExecutionNode::Movement_Update.M());
+		inst.ecs.CallAsyncOverlap(&TestOverlap_FirstPass, &TestOverlap_SecondPass, EExecutionNode::TestOverlap);
+		inst.ecs.CallAsync(&GameMovement_Update, EExecutionNode::Movement_Update, EExecutionNode::TestOverlap);
 
 		inst.ecs.WorkFromMainThread(false);
 

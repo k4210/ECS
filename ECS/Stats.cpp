@@ -19,6 +19,7 @@ const Stat::FStatToStr Stat::stat_to_str([](const StatId eid)
 		case EStatId::Graphic_WaitForRenderSync: return "Graphic_WaitForRenderSync";
 		case EStatId::Display: return "Display";
 		case EStatId::GameFrame: return "GameFrame";
+		case EStatId::QuadTreeIteratorConstrucion: return "QuadTreeIteratorConstrucion";
 	}
 	return "unknown";
 });

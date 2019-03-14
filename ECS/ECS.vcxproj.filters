@@ -46,10 +46,10 @@
     <ClCompile Include="Components.cpp">
       <Filter>Game</Filter>
     </ClCompile>
-    <ClCompile Include="GameBase.cpp">
+    <ClCompile Include="GameMain.cpp">
       <Filter>Game</Filter>
     </ClCompile>
-    <ClCompile Include="GameMain.cpp">
+    <ClCompile Include="Stats.cpp">
       <Filter>Game</Filter>
     </ClCompile>
   </ItemGroup>
