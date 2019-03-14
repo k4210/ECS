@@ -171,6 +171,10 @@ namespace ECS
 					{
 						optional_notifier->Open();
 					}
+					{	//in case some tasks waits for the completed one
+						//std::unique_lock<std::mutex> guard(owner.new_task_mutex);
+						owner.new_task_cv.notify_all();
+					}
 					return true;
 				}
 				return false;
@@ -312,7 +316,6 @@ namespace ECS
 			, ThreadGate* optional_notifier = nullptr)
 		{
 			assert(node_id.IsValid());
-			//We can ignore filter in the following masks:
 			constexpr Details::ComponentCache read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst>::Build<TDecoratedComps...>();
 			constexpr Details::ComponentCache mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
 			static_assert((read_only_components & mutable_components).none(), "");
@@ -330,9 +333,7 @@ namespace ECS
 					, node_id
 					, optional_notifier });
 			}
-
 			LOG(printf_s("ECS new async task: '%s'\n", Str(node_id.GetIndex()));)
-
 			new_task_cv.notify_one();
 		}
 
@@ -344,7 +345,6 @@ namespace ECS
 			, ThreadGate* optional_notifier = nullptr)
 		{
 			assert(node_id.IsValid());
-			//We can ignore filter in the following masks:
 			constexpr Details::ComponentCache read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst  >::Build<TDComps1..., TDComps2...>();
 			constexpr Details::ComponentCache mutable_components   = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDComps1..., TDComps2...>();
 			static_assert((read_only_components & mutable_components).none(), "");
@@ -363,10 +363,8 @@ namespace ECS
 					, node_id
 					, optional_notifier });
 			}
-
 			LOG(printf_s("ECS new async task: '%s'\n", Str(node_id.GetIndex()));)
 			new_task_cv.notify_one();
 		}
-
 	};
 }

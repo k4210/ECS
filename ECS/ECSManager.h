@@ -24,27 +24,52 @@ namespace ECS
 			Details::ComponentCache components_cache;
 			EntityHandle::TGeneration generation = -1;
 		public:
-			constexpr bool IsEmpty() const { return components_cache.none(); }
+			constexpr bool IsEmpty() const 
+			{ 
+				return components_cache.none(); 
+			}
+
 			constexpr bool PassFilter(const Details::ComponentCache& filter) const
 			{
 				return IsSubSetOf(filter, components_cache);
 			}
-			constexpr bool HasComponent(int ComponentId) const { return components_cache.test(ComponentId); }
+
+			constexpr bool HasComponent(int ComponentId) const 
+			{ 
+				return components_cache.test(ComponentId); 
+			}
+
 			template<typename TComponent> constexpr bool HasComponent() const
 			{
 				return components_cache.test(TComponent::kComponentTypeIdx);
 			}
-			constexpr const Details::ComponentCache& GetCache() const { return components_cache; }
 
-			constexpr void Reset() { components_cache.reset(); }
+			constexpr void Reset() 
+			{ 
+				components_cache.reset();
+			}
+
 			template<typename TComponent> constexpr void Set(bool value)
 			{
 				assert(components_cache[TComponent::kComponentTypeIdx] != value);
 				components_cache[TComponent::kComponentTypeIdx] = value;
 			}
 
-			EntityHandle::TGeneration GetGeneration() const { return generation; }
-			EntityHandle::TGeneration NewGeneration() { generation++; return generation;}
+			EntityHandle::TGeneration GetGeneration() const 
+			{ 
+				return generation; 
+			}
+
+			EntityHandle::TGeneration NewGeneration()
+			{ 
+				generation++; 
+				return generation;
+			}
+
+			constexpr const Details::ComponentCache& GetCache() const 
+			{ 
+				return components_cache; 
+			}
 		};
 
 		struct EntityContainer
@@ -118,7 +143,10 @@ namespace ECS
 				free_entities.set(id, true);
 			}
 
-			int GetNumEntities() const { return cached_number; }
+			int GetNumEntities() const 
+			{ 
+				return cached_number; 
+			}
 
 			EntityId GetNext(EntityId id, const Details::ComponentCache& pattern) const
 			{
