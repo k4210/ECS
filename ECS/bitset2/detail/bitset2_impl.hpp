@@ -178,7 +178,7 @@ protected:
   bitset2_impl &
   set() noexcept
   {
-    if( N > 0 )
+    if constexpr( N > 0 )
     {
       size_t c= 0;
       for( ; c < n_words - 1; ++c ) m_value[c]= ~base_t(0);

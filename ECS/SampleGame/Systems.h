@@ -13,7 +13,7 @@ static QuadTree::Region ToRegion(const Position& pos, const CircleSize& size)
 		static_cast<uint8_t>(1 + ((position_offset + pos.pos.y + size.radius) / QuadTree::kQuadPixelSize)) };
 }
 
-void GraphicSystem_Update(ECS::EntityId id
+void GraphicSystem_Update(ECS::EntityId
 	, const Position& pos
 	, const CircleSize& size
 	, Sprite2D& sprite)
@@ -25,7 +25,7 @@ void GraphicSystem_Update(ECS::EntityId id
 	}
 }
 
-void GraphicSystem_RenderSync(ECS::EntityId id, const Sprite2D& sprite)
+void GraphicSystem_RenderSync(ECS::EntityId, const Sprite2D& sprite)
 {
 	GResource::inst->window.draw(sprite.shape);
 }
@@ -65,7 +65,8 @@ void GameMovement_Update(ECS::EntityId id
 	{
 		auto& qt = GResource::inst->quad_tree;
 		qt.Remove(id, ToRegion(pos, size));
-		pos.pos += vel.velocity * 100.0f * GResource::inst->frame_time_seconds;
+		const float scale_speed = 200.0f;
+		pos.pos += vel.velocity * scale_speed * GResource::inst->frame_time_seconds;
 		qt.Add(id, ToRegion(pos, size));
 	}
 }
@@ -90,13 +91,13 @@ TestOverlap_Holder TestOverlap_FirstPass(ECS::EntityId id, const Position& pos, 
 	return TestOverlap_Holder{ id, pos, size, vel, ToRegion(pos, size) };
 }
 
-void TestOverlap_SecondPass(TestOverlap_Holder& first_pass, ECS::EntityId id, const Position& pos, const CircleSize& size, Velocity& vel)
+void TestOverlap_SecondPass(TestOverlap_Holder& first_pass, ECS::EntityId, const Position& pos, const CircleSize& size, Velocity& vel)
 {
 	const sf::Vector2f diff = (pos.pos - first_pass.pos.pos);
 	const float dist_sq = diff.x * diff.x + diff.y * diff.y;
 	const float radius_sum_sq = (first_pass.size.radius + size.radius) * (first_pass.size.radius + size.radius);
 	
-	const float update_time = GResource::inst->frame_time_seconds * 100.0f;
+	const float update_time = 0.0001f;
 	const sf::Vector2f next_diff = diff + (vel.velocity - first_pass.vel.velocity) * update_time;
 	const float next_dist_sq = next_diff.x * next_diff.x + next_diff.y * next_diff.y;
 

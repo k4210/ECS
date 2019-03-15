@@ -11,22 +11,27 @@
 
 #define IMPLEMENT_EMPTY_COMPONENT(COMP) template<> void ECS::Details::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId) { }
 
+// TODO: Tags, exclusive tags
+// List for tags to faster iteration )test)
+// Exclusive tags are recognise be Async, they don't block each other
+
 namespace ECS
 {
 	// >>CONFIG
-	static const constexpr int kMaxComponentTypeNum = 256;
 	static const constexpr int kMaxEntityNum = 1024;
 	static const constexpr int kActuallyImplementedComponents = 12;
-	static const constexpr int kMaxConcurrentWorkerThreads = 4; //change ECSManagerAsync constructor
+	static const constexpr int kMaxConcurrentWorkerThreads = 3;
 	static const constexpr int kMaxExecutionNode = 64;
 	// <<CONFIG
+
+	static const constexpr int kMaxComponentTypeNum = kActuallyImplementedComponents;
 	static_assert(kActuallyImplementedComponents <= kMaxComponentTypeNum, "too many component types");
 
 	struct EntityId
 	{
-		using TIndex = int16_t;
+		using TIndex = uint16_t;
 	private:
-		TIndex index = -1;
+		TIndex index = 0xFFFF;
 
 		constexpr EntityId(TIndex _idx) : index(_idx)
 		{
@@ -43,7 +48,8 @@ namespace ECS
 
 		constexpr bool operator < (const EntityId& other) const
 		{
-			return index < other.index;
+			return ((index == 0xFFFF) && (other.index != 0xFFFF))
+				|| (index < other.index);
 		}
 
 		constexpr bool operator== (const EntityId& other) const
@@ -185,6 +191,7 @@ namespace ECS
 				{
 					return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id, arr[TIndex]);
 				}
+				(void)arr;
 				return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id);
 			}
 

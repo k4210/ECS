@@ -170,7 +170,7 @@ namespace moodycamel { namespace details {
 
 #ifndef MOODYCAMEL_NOEXCEPT
 #if !defined(MOODYCAMEL_EXCEPTIONS_ENABLED)
-#define MOODYCAMEL_NOEXCEPT
+#define MOODYCAMEL_NOEXCEPT noexcept
 #define MOODYCAMEL_NOEXCEPT_CTOR(type, valueType, expr) true
 #define MOODYCAMEL_NOEXCEPT_ASSIGN(type, valueType, expr) true
 #elif defined(_MSC_VER) && defined(_NOEXCEPT) && _MSC_VER < 1800
@@ -785,7 +785,7 @@ public:
 		}
 		
 		// Destroy implicit producer hash tables
-		if (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE != 0) {
+		if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE != 0) {
 			auto hash = implicitProducerHash.load(std::memory_order_relaxed);
 			while (hash != nullptr) {
 				auto prev = hash->prev;
@@ -910,7 +910,7 @@ public:
 	// Thread-safe.
 	inline bool enqueue(T const& item)
 	{
-		if (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) return false;
+		if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) return false;
 		return inner_enqueue<CanAlloc>(item);
 	}
 	
@@ -1485,7 +1485,7 @@ private:
 		template<InnerQueueContext context>
 		inline bool is_empty() const
 		{
-			if (context == explicit_context && BLOCK_SIZE <= EXPLICIT_BLOCK_EMPTY_COUNTER_THRESHOLD) {
+			if constexpr (context == explicit_context && BLOCK_SIZE <= EXPLICIT_BLOCK_EMPTY_COUNTER_THRESHOLD) {
 				// Check flags
 				for (size_t i = 0; i < BLOCK_SIZE; ++i) {
 					if (!emptyFlags[i].load(std::memory_order_relaxed)) {
@@ -1512,7 +1512,7 @@ private:
 		template<InnerQueueContext context>
 		inline bool set_empty(index_t i)
 		{
-			if (context == explicit_context && BLOCK_SIZE <= EXPLICIT_BLOCK_EMPTY_COUNTER_THRESHOLD) {
+			if constexpr (context == explicit_context && BLOCK_SIZE <= EXPLICIT_BLOCK_EMPTY_COUNTER_THRESHOLD) {
 				// Set flag
 				assert(!emptyFlags[BLOCK_SIZE - 1 - static_cast<size_t>(i & static_cast<index_t>(BLOCK_SIZE - 1))].load(std::memory_order_relaxed));
 				emptyFlags[BLOCK_SIZE - 1 - static_cast<size_t>(i & static_cast<index_t>(BLOCK_SIZE - 1))].store(true, std::memory_order_release);
@@ -1567,7 +1567,7 @@ private:
 		template<InnerQueueContext context>
 		inline void reset_empty()
 		{
-			if (context == explicit_context && BLOCK_SIZE <= EXPLICIT_BLOCK_EMPTY_COUNTER_THRESHOLD) {
+			if constexpr (context == explicit_context && BLOCK_SIZE <= EXPLICIT_BLOCK_EMPTY_COUNTER_THRESHOLD) {
 				// Reset flags
 				for (size_t i = 0; i != BLOCK_SIZE; ++i) {
 					emptyFlags[i].store(false, std::memory_order_relaxed);
@@ -3010,7 +3010,7 @@ private:
 			return block;
 		}
 		
-		if (canAlloc == CanAlloc) {
+		if constexpr (canAlloc == CanAlloc) {
 			return create<Block>();
 		}
 		
@@ -3236,14 +3236,14 @@ private:
 	
 	struct ImplicitProducerHash
 	{
-		size_t capacity;
-		ImplicitProducerKVP* entries;
-		ImplicitProducerHash* prev;
+		size_t capacity = 0;
+		ImplicitProducerKVP* entries = nullptr;
+		ImplicitProducerHash* prev = nullptr;
 	};
 	
 	inline void populate_initial_implicit_producer_hash()
 	{
-		if (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) return;
+		if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) return;
 		
 		implicitProducerHashCount.store(0, std::memory_order_relaxed);
 		auto hash = &initialImplicitProducerHash;
@@ -3311,7 +3311,7 @@ private:
 		auto hashedId = details::hash_thread_id(id);
 		
 		auto mainHash = implicitProducerHash.load(std::memory_order_acquire);
-		for (auto hash = mainHash; hash != nullptr; hash = hash->prev) {
+		for (auto hash = mainHash; hash != nullptr; hash = (hash != nullptr) ? hash->prev : nullptr) {
 			// Look for the id in this hash
 			auto index = hashedId;
 			while (true) {		// Not an infinite loop because at least one slot is free in the hash table
@@ -3357,13 +3357,13 @@ private:
 		// Insert!
 		auto newCount = 1 + implicitProducerHashCount.fetch_add(1, std::memory_order_relaxed);
 		while (true) {
-			if (newCount >= (mainHash->capacity >> 1) && !implicitProducerHashResizeInProgress.test_and_set(std::memory_order_acquire)) {
+			if (mainHash && (newCount >= (mainHash->capacity >> 1)) && !implicitProducerHashResizeInProgress.test_and_set(std::memory_order_acquire)) {
 				// We've acquired the resize lock, try to allocate a bigger hash table.
 				// Note the acquire fence synchronizes with the release fence at the end of this block, and hence when
 				// we reload implicitProducerHash it must be the most recent version (it only gets changed within this
 				// locked block).
 				mainHash = implicitProducerHash.load(std::memory_order_acquire);
-				if (newCount >= (mainHash->capacity >> 1)) {
+				if (mainHash && (newCount >= (mainHash->capacity >> 1))) {
 					auto newCapacity = mainHash->capacity << 1;
 					while (newCount >= (newCapacity >> 1)) {
 						newCapacity <<= 1;
@@ -3396,7 +3396,7 @@ private:
 			// If it's < three-quarters full, add to the old one anyway so that we don't have to wait for the next table
 			// to finish being allocated by another thread (and if we just finished allocating above, the condition will
 			// always be true)
-			if (newCount < (mainHash->capacity >> 1) + (mainHash->capacity >> 2)) {
+			if ((nullptr != mainHash) && (newCount < (mainHash->capacity >> 1) + (mainHash->capacity >> 2))) {
 				bool recycled;
 				auto producer = static_cast<ImplicitProducer*>(recycle_or_create_producer(false, recycled));
 				if (producer == nullptr) {
@@ -3543,8 +3543,8 @@ private:
 	std::atomic<std::uint32_t> producerCount;
 	
 	std::atomic<size_t> initialBlockPoolIndex;
-	Block* initialBlockPool;
-	size_t initialBlockPoolSize;
+	Block* initialBlockPool = nullptr;
+	size_t initialBlockPoolSize = 0;
 	
 #if !MCDBGQ_USEDEBUGFREELIST
 	FreeList<Block> freeList;
@@ -3552,7 +3552,7 @@ private:
 	debug::DebugFreeList<Block> freeList;
 #endif
 	
-	std::atomic<ImplicitProducerHash*> implicitProducerHash;
+	std::atomic<ImplicitProducerHash*> implicitProducerHash = nullptr;
 	std::atomic<size_t> implicitProducerHashCount;		// Number of slots logically used
 	ImplicitProducerHash initialImplicitProducerHash;
 	std::array<ImplicitProducerKVP, INITIAL_IMPLICIT_PRODUCER_HASH_SIZE> initialImplicitProducerHashEntries;

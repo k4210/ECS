@@ -1,9 +1,9 @@
 #pragma once
 
 #include <SFML/Graphics.hpp>
-#include "ECSManagerAsync.h"
-#include "ECSEvent.h"
-#include "ECSStat.h"
+#include "ECS/ECSManagerAsync.h"
+#include "ECS/ECSEvent.h"
+#include "ECS/ECSStat.h"
 #include "malloc.h"
 
 struct EExecutionNode
@@ -40,10 +40,10 @@ struct QuadTree
 
 	struct Region
 	{
-		uint8_t min_x = -1;
-		uint8_t min_y = -1;
-		uint8_t max_x = -1;
-		uint8_t max_y = -1;
+		uint8_t min_x = 0xFF;
+		uint8_t min_y = 0xFF;
+		uint8_t max_x = 0xFF;
+		uint8_t max_y = 0xFF;
 
 		uint32_t	SizeX()		const { return max_x - min_x; }
 		uint32_t	SizeY()		const { return max_y - min_y; }
@@ -128,7 +128,7 @@ struct QuadTree
 	{
 		ForEveryLeafInRegion(region, [](Leaf& leaf, const ECS::EntityId id)
 		{
-			int idx = 0;
+			int64_t idx = 0;
 			for (; idx < kMaxElementsPerLeaf; idx++)
 			{
 				auto& it_id = leaf.data[idx];
@@ -145,13 +145,13 @@ struct QuadTree
 				assert(false);
 				return;
 			}
-			int idx2 = idx + 1;
+			int64_t idx2 = idx + 1;
 			for (; (idx2 < kMaxElementsPerLeaf) && leaf.data[idx2].IsValidForm(); idx2++) {}
 			idx2--;
 			assert(idx2 < kMaxElementsPerLeaf);
 			if (idx2 > idx)
 			{
-				memmove(&leaf.data[idx], &leaf.data[idx + 1], sizeof(ECS::EntityId) * (idx2 - idx));
+				memmove_s(&leaf.data[idx], sizeof(ECS::EntityId) * (kMaxElementsPerLeaf - idx), &leaf.data[idx + 1], sizeof(ECS::EntityId) * (idx2 - idx));
 			}
 			leaf.data[idx2] = {};
 		}, id);
@@ -187,6 +187,7 @@ struct QuadTree
 
 			const std::size_t leaf_iterators_mam_size = region.Area() * sizeof(uint32_t*);
 			uint32_t* leaf_iterators = reinterpret_cast<uint32_t*>(_malloca(leaf_iterators_mam_size));
+			assert(leaf_iterators);
 			memset(leaf_iterators, 0, leaf_iterators_mam_size);
 
 			ECS::EntityId previous_id{};
@@ -195,9 +196,9 @@ struct QuadTree
 			{
 				const ECS::EntityId* min_id = nullptr;
 				uint32_t* min_id_iter = nullptr;
-				for (uint32_t x = region.min_x; x < region.max_x; x++)
+				for (uint8_t x = region.min_x; x < region.max_x; x++)
 				{
-					for (uint32_t y = region.min_y; y < region.max_y; y++)
+					for (uint8_t y = region.min_y; y < region.max_y; y++)
 					{
 						const Leaf& leaf = qt.entities[x][y];
 
@@ -207,7 +208,7 @@ struct QuadTree
 						const ECS::EntityId* local_id = &leaf.data[local_iter];
 						if (!local_id->IsValidForm()) continue;
 
-						if ((*local_id < lowed_bound) || (*local_id < lowed_bound) || (*local_id == previous_id))
+						if ((*local_id < lowed_bound) || (*local_id == lowed_bound) || (*local_id == previous_id))
 						{
 							local_iter++;
 							if (local_iter >= kMaxElementsPerLeaf) continue;
@@ -215,7 +216,7 @@ struct QuadTree
 							if (!local_id->IsValidForm()) continue;
 						}
 						assert(previous_id < *local_id);
-						if (!min_id || (*local_id < *min_id))
+						if ((nullptr == min_id) || (*local_id < *min_id))
 						{
 							min_id = local_id;
 							min_id_iter = &local_iter;

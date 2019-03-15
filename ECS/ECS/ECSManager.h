@@ -17,7 +17,6 @@ namespace ECS
 
 	class ECSManager
 	{
-	protected:
 		struct Entity
 		{
 		private:

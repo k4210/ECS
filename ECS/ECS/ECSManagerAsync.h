@@ -39,13 +39,13 @@ namespace ECS
 
 	struct ExecutionNodeId
 	{
-		using Mask = Bitset2::bitset2<kMaxExecutionNode>;
 	private:
-		int index = -1;
+		uint16_t index = 0xFFFF;
 		friend class ECSManagerAsync;
+		friend struct ExecutionNodeIdSet;
 	public:
 		constexpr ExecutionNodeId() = default;
-		constexpr ExecutionNodeId(int in_idx)
+		constexpr ExecutionNodeId(uint16_t in_idx)
 			: index(in_idx)
 		{
 			assert(IsValid());
@@ -55,29 +55,32 @@ namespace ECS
 
 		constexpr bool IsValid() const
 		{
-			return (index >= 0) && (index < kMaxExecutionNode);
+			return (index != 0xFFFF) && (index < kMaxExecutionNode);
 		}
+	};
 
-		constexpr void MarkOnMask(Mask& mask) const
+	struct ExecutionNodeIdSet
+	{
+		Bitset2::bitset2<kMaxExecutionNode> bits;
+
+		constexpr void Add(const ExecutionNodeId& id)
 		{
-			if (IsValid())
+			if (id.IsValid())
 			{
-				mask.set(index, true);
+				bits.set(id.index, true);
 			}
 		}
 
-		constexpr Mask M() const
-		{
-			Mask m; 
-			MarkOnMask(m);
-			return m;
+		ExecutionNodeIdSet() = default;
+
+		constexpr ExecutionNodeIdSet(const ExecutionNodeId& id) 
+		{ 
+			Add(id); 
 		}
 
-		operator Mask() const { return M(); }
-
-		constexpr bool Test(const Mask& mask) const
+		template<typename... TSets>constexpr ExecutionNodeIdSet(TSets... id)
 		{
-			return IsValid() ? mask.test(index) : false;
+			(Add(id), ...);
 		}
 	};
 
@@ -92,7 +95,7 @@ namespace ECS
 			void* per_entity_function_second_pass = nullptr;
 			Details::ComponentCache read_only_components;
 			Details::ComponentCache mutable_components;
-			ExecutionNodeId::Mask required_completed_tasks;
+			ExecutionNodeIdSet required_completed_tasks;
 			ExecutionNodeId execution_id;
 			ThreadGate* optional_notifier = nullptr;
 		};
@@ -105,7 +108,7 @@ namespace ECS
 			TFuncPtr func = reinterpret_cast<TFuncPtr>(task.per_entity_function);
 			ecs.Call<TFilter>(func);
 		}
-
+		
 		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename THolder, typename TFuncPtr_FP, typename TFuncPtr_SP>
 		void CallGeneric2(ECSManager& ecs, Task& task)
 		{
@@ -121,7 +124,7 @@ namespace ECS
 
 	class ECSManagerAsync : public ECSManager
 	{
-	protected:
+	private:
 		class WorkerThread
 		{
 			std::optional<Details::Task> task;
@@ -132,7 +135,7 @@ namespace ECS
 			int worker_idx = -1;
 
 			WorkerThread(ECSManagerAsync& in_owner, int idx)
-				: owner(in_owner), thread(), worker_idx(idx)
+				: owner(in_owner), worker_idx(idx)
 			{}
 
 			const Details::Task* GetTask_Unsafe() const
@@ -164,7 +167,7 @@ namespace ECS
 					auto optional_notifier = task->optional_notifier;
 					{
 						std::lock_guard<std::mutex> guard(owner.mutex);
-						task->execution_id.MarkOnMask(owner.completed_tasks);
+						owner.completed_tasks.Add(task->execution_id);
 						task = {};
 					}
 					if (optional_notifier)
@@ -207,7 +210,7 @@ namespace ECS
 
 		std::optional<Details::Task> main_thread_task;
 
-		ExecutionNodeId::Mask completed_tasks;
+		ExecutionNodeIdSet completed_tasks;
 
 		std::optional<Details::Task> FindTaskToExecute_Unguarded()
 		{
@@ -235,7 +238,7 @@ namespace ECS
 			}
 			for (auto it = pending_tasks.begin(); it != pending_tasks.end(); it++)
 			{
-				const bool ok_required_tasks = IsSubSetOf(it->required_completed_tasks, completed_tasks);
+				const bool ok_required_tasks = IsSubSetOf(it->required_completed_tasks.bits, completed_tasks.bits);
 				const bool ok_components = !AnyCommonBit(it->mutable_components, currently_read_only_components)
 					&& !AnyCommonBit(it->read_only_components, currently_mutable_components)
 					&& !AnyCommonBit(it->mutable_components, currently_mutable_components);
@@ -248,10 +251,17 @@ namespace ECS
 			}
 			return {};
 		}
-	public:
-		ECSManagerAsync()
+
+		template<std::size_t... indexes>
+		ECSManagerAsync(std::index_sequence<indexes...>)
 			: ECSManager()
-			, wt{ { *this, 0 }, { *this, 1 }, { *this, 2 }, { *this, 3 } }
+			, wt{ {*this, indexes}... }
+		{
+		}
+	public:
+
+		ECSManagerAsync()
+			: ECSManagerAsync(std::make_index_sequence<kMaxConcurrentWorkerThreads>{})
 		{}
 
 		void StartThreads() 
@@ -306,13 +316,13 @@ namespace ECS
 		}
 		void ResetCompletedTasks()
 		{
-			completed_tasks.reset();
+			completed_tasks.bits.reset();
 		}
 
 		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
 		void CallAsync(void(*func)(EntityId, TDecoratedComps...)
 			, ExecutionNodeId node_id
-			, ExecutionNodeId::Mask requiried_completed_tasks = {}
+			, ExecutionNodeIdSet requiried_completed_tasks = {}
 			, ThreadGate* optional_notifier = nullptr)
 		{
 			assert(node_id.IsValid());
@@ -341,7 +351,7 @@ namespace ECS
 		void CallAsyncOverlap(THolder(*first_pass)(EntityId, TDComps1...)
 			, void(*second_pass)(THolder&, EntityId, TDComps2...)
 			, ExecutionNodeId node_id
-			, ExecutionNodeId::Mask requiried_completed_tasks = {}
+			, ExecutionNodeIdSet requiried_completed_tasks = {}
 			, ThreadGate* optional_notifier = nullptr)
 		{
 			assert(node_id.IsValid());
