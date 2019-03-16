@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SFML/Graphics.hpp>
+#include "ECS/ECSBase.h"
 #include "ECS/ECSManagerAsync.h"
 #include "ECS/ECSEvent.h"
 #include "ECS/ECSStat.h"
@@ -180,7 +181,7 @@ struct QuadTree
 		Iter(const ECS::EntityId lowed_bound, const Region region, const QuadTree& qt, std::vector<uint8_t>& in_memory)
 			: memory(in_memory)
 		{
-			STAT(ECS::ScopeDurationLog __sdl(EStatId::QuadTreeIteratorConstrucion);)
+			ECS::ScopeDurationLog __sdl(EStatId::QuadTreeIteratorConstrucion);
 
 			const uint32_t max_elements_num = region.Area() * kMaxElementsPerLeaf;
 			memory.resize(max_elements_num * sizeof(ECS::EntityId));

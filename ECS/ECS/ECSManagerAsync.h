@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ECSBase.h"
 #include "ECSManager.h"
 #include <optional>
 #include <deque>
@@ -71,6 +72,11 @@ namespace ECS
 			}
 		}
 
+		constexpr bool Test(const ExecutionNodeId& id) const
+		{
+			return id.IsValid() ? bits.test(id.index) : false;
+		}
+
 		ExecutionNodeIdSet() = default;
 
 		constexpr ExecutionNodeIdSet(const ExecutionNodeId& id) 
@@ -84,7 +90,7 @@ namespace ECS
 		}
 	};
 
-	namespace Details
+	namespace AsyncDetails
 	{
 		struct Task;
 		using InnerSyncFunc = std::add_pointer<void(ECSManager&, Task&)>::type;
@@ -127,7 +133,7 @@ namespace ECS
 	private:
 		class WorkerThread
 		{
-			std::optional<Details::Task> task;
+			std::optional<AsyncDetails::Task> task;
 		public:
 			ECSManagerAsync& owner;
 			std::thread thread;
@@ -138,7 +144,7 @@ namespace ECS
 				: owner(in_owner), worker_idx(idx)
 			{}
 
-			const Details::Task* GetTask_Unsafe() const
+			const AsyncDetails::Task* GetTask_Unsafe() const
 			{
 				return task.has_value() ? &(*task) : nullptr;
 			}
@@ -150,8 +156,9 @@ namespace ECS
 				return joinable;
 			}
 
-			static bool TryExecuteTask(std::optional<Details::Task>& task, ECSManagerAsync& owner LOG_PARAM(int worker_idx))
+			static bool TryExecuteTask(std::optional<AsyncDetails::Task>& task, ECSManagerAsync& owner, int worker_idx)
 			{
+				(void)worker_idx;
 				{
 					std::lock_guard<std::mutex> guard(owner.mutex);
 					task = owner.FindTaskToExecute_Unguarded();
@@ -159,11 +166,12 @@ namespace ECS
 
 				if (task.has_value())
 				{
-					LOG(printf_s("ECS worker %d found '%s'\n", worker_idx, Str(task->execution_id.GetIndex()));)
+					LOG("ECS worker %d found '%s'", worker_idx, Str(task->execution_id.GetIndex()));
 					{
-						STAT(ScopeDurationLog __sdl(task->execution_id.GetIndex());)
+						ScopeDurationLog __sdl(task->execution_id.GetIndex());
 						task->func(owner, *task);
 					}
+					LOG("ECS worker %d done '%s'", worker_idx, Str(task->execution_id.GetIndex()));
 					auto optional_notifier = task->optional_notifier;
 					{
 						std::lock_guard<std::mutex> guard(owner.mutex);
@@ -187,7 +195,7 @@ namespace ECS
 			{
 				while (runs)
 				{
-					const bool bExecuted = TryExecuteTask(task, owner LOG_PARAM(worker_idx));
+					const bool bExecuted = TryExecuteTask(task, owner, worker_idx);
 					if(!bExecuted)
 					{
 						std::unique_lock<std::mutex> guard(owner.new_task_mutex);
@@ -201,33 +209,33 @@ namespace ECS
 		};
 		friend WorkerThread;
 
-		std::deque<Details::Task> pending_tasks;
+		std::deque<AsyncDetails::Task> pending_tasks;
 		std::mutex mutex;
 		WorkerThread wt[kMaxConcurrentWorkerThreads];
 
 		std::condition_variable new_task_cv;
 		std::mutex new_task_mutex;
 
-		std::optional<Details::Task> main_thread_task;
+		std::optional<AsyncDetails::Task> main_thread_task;
 
 		ExecutionNodeIdSet completed_tasks;
 
-		std::optional<Details::Task> FindTaskToExecute_Unguarded()
+		std::optional<AsyncDetails::Task> FindTaskToExecute_Unguarded()
 		{
 			if (pending_tasks.empty())
 				return {};
-			STAT(ScopeDurationLog __sdl(-1);)
+			ScopeDurationLog __sdl(-1);
 			
 			Details::ComponentCache currently_read_only_components;
 			Details::ComponentCache currently_mutable_components;
-			auto tasks_dependencies = [&](const Details::Task& task)
+			auto tasks_dependencies = [&](const AsyncDetails::Task& task)
 			{
 				currently_read_only_components |= task.read_only_components;
 				currently_mutable_components |= task.mutable_components;
 			};
 			for (auto& t : wt)
 			{
-				const Details::Task* task = t.GetTask_Unsafe();
+				const AsyncDetails::Task* task = t.GetTask_Unsafe();
 				if (!task)
 					continue;
 				tasks_dependencies(*task);
@@ -244,8 +252,11 @@ namespace ECS
 					&& !AnyCommonBit(it->mutable_components, currently_mutable_components);
 				if (ok_required_tasks && ok_components)
 				{
-					std::optional<Details::Task> result(std::move(*it));
+					assert(!completed_tasks.Test(it->execution_id));
+					std::optional<AsyncDetails::Task> result(std::move(*it));
+					const auto remaining_size = pending_tasks.size();
 					pending_tasks.erase(it);
+					assert((remaining_size - 1) == pending_tasks.size());
 					return result;
 				}
 			}
@@ -297,6 +308,8 @@ namespace ECS
 				if (t.GetTask_Unsafe())
 					return true;
 			}
+			if (!pending_tasks.empty())
+				return true;
 			return false;
 		}
 		bool WorkFromMainThread(bool bSingleJob)
@@ -305,7 +318,7 @@ namespace ECS
 			bool result = false;
 			do
 			{
-				const bool bExecuted = WorkerThread::TryExecuteTask(main_thread_task, *this LOG_PARAM(-1));
+				const bool bExecuted = WorkerThread::TryExecuteTask(main_thread_task, *this, -1);
 				if(bExecuted) 
 					result = true;
 				else 
@@ -316,6 +329,8 @@ namespace ECS
 		}
 		void ResetCompletedTasks()
 		{
+			std::lock_guard<std::mutex> guard(mutex);
+			assert(pending_tasks.empty());
 			completed_tasks.bits.reset();
 		}
 
@@ -330,11 +345,11 @@ namespace ECS
 			constexpr Details::ComponentCache mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
 			static_assert((read_only_components & mutable_components).none(), "");
 
-			Details::InnerSyncFunc inner_func = &Details::CallGeneric<TFilter, TDecoratedComps...>;
+			AsyncDetails::InnerSyncFunc inner_func = &AsyncDetails::CallGeneric<TFilter, TDecoratedComps...>;
 			void* per_entity_func = func;
 			{
 				std::lock_guard<std::mutex> guard(mutex);
-				pending_tasks.push_back(Details::Task{ inner_func
+				pending_tasks.push_back(AsyncDetails::Task{ inner_func
 					, per_entity_func
 					, nullptr
 					, read_only_components
@@ -343,7 +358,7 @@ namespace ECS
 					, node_id
 					, optional_notifier });
 			}
-			LOG(printf_s("ECS new async task: '%s'\n", Str(node_id.GetIndex()));)
+			//LOG("ECS new async task: '%s'", Str(node_id.GetIndex()));
 			new_task_cv.notify_one();
 		}
 
@@ -361,10 +376,10 @@ namespace ECS
 
 			using TFuncPtr_FP = typename std::add_pointer_t<THolder(EntityId, TDComps1...)>;
 			using TFuncPtr_SP = typename std::add_pointer_t<void(THolder&, EntityId, TDComps2...)>;
-			Details::InnerSyncFunc inner_func = &Details::CallGeneric2<TFilterA, TFilterB, THolder, TFuncPtr_FP, TFuncPtr_SP>;
+			AsyncDetails::InnerSyncFunc inner_func = &AsyncDetails::CallGeneric2<TFilterA, TFilterB, THolder, TFuncPtr_FP, TFuncPtr_SP>;
 			{
 				std::lock_guard<std::mutex> guard(mutex);
-				pending_tasks.push_back(Details::Task{ inner_func
+				pending_tasks.push_back(AsyncDetails::Task{ inner_func
 					, first_pass
 					, second_pass
 					, read_only_components
@@ -373,7 +388,7 @@ namespace ECS
 					, node_id
 					, optional_notifier });
 			}
-			LOG(printf_s("ECS new async task: '%s'\n", Str(node_id.GetIndex()));)
+			//LOG("ECS new async task: '%s'", Str(node_id.GetIndex()));
 			new_task_cv.notify_one();
 		}
 	};

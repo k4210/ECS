@@ -5,21 +5,17 @@
 #include <vector>
 #include <assert.h>
 
-#ifndef NDEBUG
+#ifndef NDEBUG // DEBUG
 #define ECS_STAT_ENABLED 1
-#define ECS_LOG_ENABLED 0
-#else
+#define ECS_LOG_ENABLED 1
+#else // RELEASE
 #define ECS_STAT_ENABLED 1
-#define ECS_LOG_ENABLED 0
+#define ECS_LOG_ENABLED  1
 #endif
 
 #undef STAT
-#undef STAT_PARAM
 
 #if ECS_STAT_ENABLED
-#define STAT(x) x
-#define STAT_PARAM(x) , x
-
 namespace ECS
 {
 	using StatId = int;
@@ -70,6 +66,14 @@ namespace ECS
 				record.max = microseconds;
 		}
 
+		static void Reset()
+		{
+			for (Record& r : records)
+			{
+				r = Record{};
+			}
+		}
+
 		static void LogAll(int64_t frames)
 		{
 			printf_s("Frame: %lli\n", frames);
@@ -103,37 +107,61 @@ namespace ECS
 	struct ScopeDurationLog
 	{
 	private:
-		std::chrono::time_point<std::chrono::system_clock> start;
+		std::chrono::time_point<std::chrono::high_resolution_clock> start;
 		StatId id;
 	public:
 		ScopeDurationLog(StatId in_id)
-			: start(std::chrono::system_clock::now())
+			: start(std::chrono::high_resolution_clock::now())
 			, id(in_id) {}
 
 		template<typename T>
 		ScopeDurationLog(T in_id)
-			: start(std::chrono::system_clock::now())
+			: start(std::chrono::high_resolution_clock::now())
 			, id(static_cast<int>(in_id)) {}
 
 		~ScopeDurationLog()
 		{
-			const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - start);
+			const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start);
 			Stat::Add(id, duration_us);
 		}
 	};
+
+#if ECS_LOG_ENABLED
+	namespace StatsDetails
+	{
+		static auto GetStartTime()
+		{
+			static std::chrono::time_point start = std::chrono::system_clock::now();
+			return start;
+		}
+
+		template<typename... Stuff>
+		inline void LogStuff(const char* format, Stuff... stuff)
+		{
+			const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - GetStartTime());
+			printf_s(format, duration_us.count() / 1000.0f, stuff...);
+		}
+	}
+#endif
 }
 
 #else // ECS_STAT_ENABLED
-#define STAT(x)
-#define STAT_PARAM(x)
+namespace ECS
+{
+	using StatId = int;
+
+	struct ScopeDurationLog
+	{
+		template<typename T> ScopeDurationLog(T) {}
+	};
+}
 #endif // ECS_STAT_ENABLED
 
+#undef LOG
 
 #if ECS_LOG_ENABLED
 static_assert(ECS_STAT_ENABLED, "");
-#define LOG(x) x
-#define LOG_PARAM(x) , x
+#define LOG(f, ...) ECS::StatsDetails::LogStuff("%4.3f "f"\n", __VA_ARGS__ )
 #else
-#define LOG(x)
-#define LOG_PARAM(x)
+#define LOG(f, ...) ((void)0)
 #endif

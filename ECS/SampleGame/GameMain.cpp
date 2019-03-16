@@ -14,18 +14,18 @@ void RenderLoop()
 	{
 		inst.window.clear();
 		{
-			STAT(ScopeDurationLog __sdl(EStatId::Graphic_WaitForUpdate);)
+			ScopeDurationLog __sdl(EStatId::Graphic_WaitForUpdate);
 			inst.wait_for_graphic_update.WaitEnterClose();
 		}
 
 		{
-			STAT(ScopeDurationLog __sdl(EStatId::Graphic_RenderSync);)
+			ScopeDurationLog __sdl(EStatId::Graphic_RenderSync);
 			inst.ecs.Call(&GraphicSystem_RenderSync);
 			inst.wait_for_render_sync.Open();
 		}
 
 		{
-			STAT(ScopeDurationLog __sdl(EStatId::Display);)
+			ScopeDurationLog __sdl(EStatId::Display);
 			inst.window.display();
 		}
 	}
@@ -60,6 +60,9 @@ void HandleSystemEvents()
 	{
 		if (event.type == sf::Event::Closed)
 		{
+#if ECS_STAT_ENABLED
+			ECS::Stat::LogAll(inst.frames);
+#endif
 			inst.close_request = true;
 		}
 	}
@@ -67,7 +70,7 @@ void HandleSystemEvents()
 
 void MainLoopBody()
 {
-	STAT(ScopeDurationLog __sdl(EStatId::GameFrame);)
+	ScopeDurationLog __sdl(EStatId::GameFrame);
 	const auto frame_start = std::chrono::system_clock::now();
 	auto& inst = *GResource::inst;
 
@@ -84,7 +87,7 @@ void MainLoopBody()
 		inst.ecs.WorkFromMainThread(false);
 
 		{
-			STAT(ScopeDurationLog __sdl(EStatId::Graphic_WaitForRenderSync);)
+			ScopeDurationLog __sdl(EStatId::Graphic_WaitForRenderSync);
 			inst.wait_for_render_sync.WaitEnterClose();
 		}
 
@@ -110,6 +113,7 @@ void MainLoopBody()
 
 	const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - frame_start);
 	inst.frame_time_seconds = duration_us.count() / 1000000.0f;
+	LOG("Frame %d time: %7.3f[ms]", inst.frames, duration_us.count() / 1000.0f);
 	inst.frames++;
 }
 
@@ -125,6 +129,11 @@ int main()
 			inst.window.create(sf::VideoMode(800, 600), "HnS");
 			inst.window.setActive(false);
 			std::thread render_thread(RenderLoop);
+
+#if ECS_STAT_ENABLED
+			MainLoopBody(); //Remove first stat pass
+			ECS::Stat::Reset();
+#endif
 			while (!GResource::inst->close_request)
 			{
 				MainLoopBody();
@@ -140,8 +149,6 @@ int main()
 
 		inst.ecs.StopThreads();
 		inst.ecs.Reset();
-
-		STAT(ECS::Stat::LogAll(inst.frames);)
 	}
 
 	delete GResource::inst;

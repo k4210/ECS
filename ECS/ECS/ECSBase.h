@@ -20,7 +20,7 @@ namespace ECS
 	// >>CONFIG
 	static const constexpr int kMaxEntityNum = 1024;
 	static const constexpr int kActuallyImplementedComponents = 12;
-	static const constexpr int kMaxConcurrentWorkerThreads = 3;
+	static const constexpr int kMaxConcurrentWorkerThreads = 2;
 	static const constexpr int kMaxExecutionNode = 64;
 	// <<CONFIG
 
