@@ -41,7 +41,8 @@ namespace ECS
 	struct ExecutionNodeId
 	{
 	private:
-		uint16_t index = 0xFFFF;
+		constexpr static const uint16_t kInvalidValue = UINT16_MAX;
+		uint16_t index = kInvalidValue;
 		friend class ECSManagerAsync;
 		friend struct ExecutionNodeIdSet;
 	public:
@@ -56,7 +57,7 @@ namespace ECS
 
 		constexpr bool IsValid() const
 		{
-			return (index != 0xFFFF) && (index < kMaxExecutionNode);
+			return (index != kInvalidValue) && (index < kMaxExecutionNode);
 		}
 	};
 
@@ -94,13 +95,32 @@ namespace ECS
 	{
 		struct Task;
 		using InnerSyncFunc = std::add_pointer<void(ECSManager&, Task&)>::type;
+
+		struct TaskFilter
+		{
+			Details::ComponentIdxSet read_only_components;
+			Details::ComponentIdxSet mutable_components;
+			Tag tag;
+
+			constexpr bool Conflict(const TaskFilter& other) const
+			{
+				if (Tag::Match(tag, other.tag))
+				{
+					return AnyCommonBit(mutable_components,		other.mutable_components)
+						|| AnyCommonBit(mutable_components,		other.read_only_components)
+						|| AnyCommonBit(read_only_components,	other.mutable_components);
+				}
+				return false;
+			}
+		};
+
 		struct Task
 		{
 			InnerSyncFunc func = nullptr;
 			void* per_entity_function = nullptr;
 			void* per_entity_function_second_pass = nullptr;
-			Details::ComponentCache read_only_components;
-			Details::ComponentCache mutable_components;
+			TaskFilter filter;
+			std::optional<TaskFilter> filter_second_pass;
 			ExecutionNodeIdSet required_completed_tasks;
 			ExecutionNodeId execution_id;
 			ThreadGate* optional_notifier = nullptr;
@@ -112,10 +132,11 @@ namespace ECS
 			using TFuncPtr = typename std::add_pointer_t<void(EntityId, TDecoratedComps...)>;
 			assert(!!task.per_entity_function);
 			TFuncPtr func = reinterpret_cast<TFuncPtr>(task.per_entity_function);
-			ecs.Call<TFilter>(func);
+			ecs.Call<TFilter>(func, task.filter.tag);
 		}
 		
-		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename THolder, typename TFuncPtr_FP, typename TFuncPtr_SP>
+		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>
+			, typename THolder, typename TFuncPtr_FP, typename TFuncPtr_SP>
 		void CallGeneric2(ECSManager& ecs, Task& task)
 		{
 			assert(!!task.per_entity_function);
@@ -124,7 +145,9 @@ namespace ECS
 			assert(!!task.per_entity_function_second_pass);
 			TFuncPtr_SP func_sp = reinterpret_cast<TFuncPtr_SP>(task.per_entity_function_second_pass);
 
-			ecs.CallOverlap<TFilterA, TFilterB, THolder>(func_fp, func_sp);
+			assert(task.filter_second_pass.has_value());
+			ecs.CallOverlap<TFilterA, TFilterB, THolder>(func_fp, func_sp
+				, task.filter.tag, task.filter_second_pass->tag);
 		}
 	}
 
@@ -173,6 +196,7 @@ namespace ECS
 					}
 					LOG("ECS worker %d done '%s'", worker_idx, Str(task->execution_id.GetIndex()));
 					auto optional_notifier = task->optional_notifier;
+					const bool valid_execution_node = task->execution_id.IsValid();
 					{
 						std::lock_guard<std::mutex> guard(owner.mutex);
 						owner.completed_tasks.Add(task->execution_id);
@@ -182,8 +206,8 @@ namespace ECS
 					{
 						optional_notifier->Open();
 					}
-					{	//in case some tasks waits for the completed one
-						//std::unique_lock<std::mutex> guard(owner.new_task_mutex);
+					if(valid_execution_node)
+					{
 						owner.new_task_cv.notify_all();
 					}
 					return true;
@@ -226,49 +250,62 @@ namespace ECS
 				return {};
 			ScopeDurationLog __sdl(-1);
 			
-			Details::ComponentCache currently_read_only_components;
-			Details::ComponentCache currently_mutable_components;
-			auto tasks_dependencies = [&](const AsyncDetails::Task& task)
+			auto tasks_conflict = [](const AsyncDetails::Task& a, const AsyncDetails::Task& b) -> bool
 			{
-				currently_read_only_components |= task.read_only_components;
-				currently_mutable_components |= task.mutable_components;
+				if (a.filter.Conflict(b.filter))
+					return true;
+
+				if(b.filter_second_pass.has_value() && a.filter.Conflict(*b.filter_second_pass))
+					return true;
+
+				if (a.filter_second_pass.has_value())
+				{
+					if (a.filter_second_pass->Conflict(b.filter))
+						return true;
+
+					if (b.filter_second_pass.has_value() && a.filter_second_pass->Conflict(*b.filter_second_pass))
+						return true;
+				}
+
+				return false;
 			};
-			for (auto& t : wt)
+
+			auto conflict_with_other_threads = [&](const AsyncDetails::Task& pending_task) -> bool
 			{
-				const AsyncDetails::Task* task = t.GetTask_Unsafe();
-				if (!task)
-					continue;
-				tasks_dependencies(*task);
-			}
-			if (main_thread_task.has_value())
-			{
-				tasks_dependencies(*main_thread_task);
-			}
+				for (auto& t : wt)
+				{
+					const AsyncDetails::Task* task = t.GetTask_Unsafe();
+					if (task && tasks_conflict(pending_task, *task))
+						return true;
+				}
+				return main_thread_task.has_value()
+					? tasks_conflict(pending_task, *main_thread_task)
+					: false;
+			};
+
 			for (auto it = pending_tasks.begin(); it != pending_tasks.end(); it++)
 			{
-				const bool ok_required_tasks = IsSubSetOf(it->required_completed_tasks.bits, completed_tasks.bits);
-				const bool ok_components = !AnyCommonBit(it->mutable_components, currently_read_only_components)
-					&& !AnyCommonBit(it->read_only_components, currently_mutable_components)
-					&& !AnyCommonBit(it->mutable_components, currently_mutable_components);
-				if (ok_required_tasks && ok_components)
-				{
-					assert(!completed_tasks.Test(it->execution_id));
-					std::optional<AsyncDetails::Task> result(std::move(*it));
-					const auto remaining_size = pending_tasks.size();
-					pending_tasks.erase(it);
-					assert((remaining_size - 1) == pending_tasks.size());
-					return result;
-				}
+				if (!IsSubSetOf(it->required_completed_tasks.bits, completed_tasks.bits))
+					continue;
+
+				if (conflict_with_other_threads(*it))
+					continue;
+
+				assert(!completed_tasks.Test(it->execution_id));
+				std::optional<AsyncDetails::Task> result(std::move(*it));
+				const auto remaining_size = pending_tasks.size();
+				pending_tasks.erase(it);
+				assert((remaining_size - 1) == pending_tasks.size());
+				return result;
 			}
 			return {};
 		}
 
 		template<std::size_t... indexes>
 		ECSManagerAsync(std::index_sequence<indexes...>)
-			: ECSManager()
-			, wt{ {*this, indexes}... }
-		{
-		}
+			: ECSManager(), wt{ {*this, indexes}... } 
+		{}
+
 	public:
 
 		ECSManagerAsync()
@@ -336,13 +373,14 @@ namespace ECS
 
 		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
 		void CallAsync(void(*func)(EntityId, TDecoratedComps...)
+			, Tag tag
 			, ExecutionNodeId node_id
 			, ExecutionNodeIdSet requiried_completed_tasks = {}
 			, ThreadGate* optional_notifier = nullptr)
 		{
 			assert(node_id.IsValid());
-			constexpr Details::ComponentCache read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst>::Build<TDecoratedComps...>();
-			constexpr Details::ComponentCache mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
+			constexpr Details::ComponentIdxSet read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst>::Build<TDecoratedComps...>();
+			constexpr Details::ComponentIdxSet mutable_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDecoratedComps...>();
 			static_assert((read_only_components & mutable_components).none(), "");
 
 			AsyncDetails::InnerSyncFunc inner_func = &AsyncDetails::CallGeneric<TFilter, TDecoratedComps...>;
@@ -352,27 +390,27 @@ namespace ECS
 				pending_tasks.push_back(AsyncDetails::Task{ inner_func
 					, per_entity_func
 					, nullptr
-					, read_only_components
-					, mutable_components
+					, AsyncDetails::TaskFilter{read_only_components, mutable_components, tag}
+					, {}
 					, requiried_completed_tasks
 					, node_id
 					, optional_notifier });
 			}
-			//LOG("ECS new async task: '%s'", Str(node_id.GetIndex()));
 			new_task_cv.notify_one();
 		}
 
 		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename THolder, typename... TDComps1, typename... TDComps2>
 		void CallAsyncOverlap(THolder(*first_pass)(EntityId, TDComps1...)
 			, void(*second_pass)(THolder&, EntityId, TDComps2...)
+			, Tag tag_a
+			, Tag tag_b
 			, ExecutionNodeId node_id
 			, ExecutionNodeIdSet requiried_completed_tasks = {}
 			, ThreadGate* optional_notifier = nullptr)
 		{
 			assert(node_id.IsValid());
-			constexpr Details::ComponentCache read_only_components = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst  >::Build<TDComps1..., TDComps2...>();
-			constexpr Details::ComponentCache mutable_components   = Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>::Build<TDComps1..., TDComps2...>();
-			static_assert((read_only_components & mutable_components).none(), "");
+			using FB_Const	= Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyConst>;
+			using FB_Mut	= Details::FilterBuilder<false, Details::EComponentFilerOptions::OnlyMutable>;
 
 			using TFuncPtr_FP = typename std::add_pointer_t<THolder(EntityId, TDComps1...)>;
 			using TFuncPtr_SP = typename std::add_pointer_t<void(THolder&, EntityId, TDComps2...)>;
@@ -382,13 +420,12 @@ namespace ECS
 				pending_tasks.push_back(AsyncDetails::Task{ inner_func
 					, first_pass
 					, second_pass
-					, read_only_components
-					, mutable_components
+					, AsyncDetails::TaskFilter{FB_Const::Build<TDComps1...>(), FB_Mut::Build<TDComps1...>(), tag_a}
+					, AsyncDetails::TaskFilter{FB_Const::Build<TDComps2...>(), FB_Mut::Build<TDComps2...>(), tag_b}
 					, requiried_completed_tasks
 					, node_id
 					, optional_notifier });
 			}
-			//LOG("ECS new async task: '%s'", Str(node_id.GetIndex()));
 			new_task_cv.notify_one();
 		}
 	};

@@ -10,7 +10,7 @@
 #define ECS_LOG_ENABLED 1
 #else // RELEASE
 #define ECS_STAT_ENABLED 1
-#define ECS_LOG_ENABLED  1
+#define ECS_LOG_ENABLED  0
 #endif
 
 #undef STAT

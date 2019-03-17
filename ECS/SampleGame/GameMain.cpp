@@ -80,9 +80,9 @@ void MainLoopBody()
 
 	{
 		ECS::DebugLockScope __dls(inst.ecs);
-		inst.ecs.CallAsync(&GraphicSystem_Update, EExecutionNode::Graphic_Update, {}, &inst.wait_for_graphic_update);
-		inst.ecs.CallAsyncOverlap(&TestOverlap_FirstPass, &TestOverlap_SecondPass, EExecutionNode::TestOverlap);
-		inst.ecs.CallAsync(&GameMovement_Update, EExecutionNode::Movement_Update, EExecutionNode::TestOverlap);
+		inst.ecs.CallAsync(&GraphicSystem_Update, ECS::Tag{}, EExecutionNode::Graphic_Update, ExecutionNodeIdSet{}, &inst.wait_for_graphic_update);
+		inst.ecs.CallAsyncOverlap(&TestOverlap_FirstPass, &TestOverlap_SecondPass, ECS::Tag{}, ECS::Tag{}, EExecutionNode::TestOverlap);
+		inst.ecs.CallAsync(&GameMovement_Update, ECS::Tag{}, EExecutionNode::Movement_Update, EExecutionNode::TestOverlap);
 
 		inst.ecs.WorkFromMainThread(false);
 

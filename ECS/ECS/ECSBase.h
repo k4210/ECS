@@ -11,30 +11,59 @@
 
 #define IMPLEMENT_EMPTY_COMPONENT(COMP) template<> void ECS::Details::ComponentBase<COMP::kComponentTypeIdx>::Remove(EntityId) { }
 
-// TODO: Tags, exclusive tags
-// List for tags to faster iteration )test)
-// Exclusive tags are recognise be Async, they don't block each other
-
 namespace ECS
 {
 	// >>CONFIG
-	static const constexpr int kMaxEntityNum = 1024;
-	static const constexpr int kActuallyImplementedComponents = 12;
-	static const constexpr int kMaxConcurrentWorkerThreads = 2;
-	static const constexpr int kMaxExecutionNode = 64;
+	static const constexpr uint32_t kMaxEntityNum = 1024;
+	static const constexpr uint32_t kActuallyImplementedComponents = 12;
+	static const constexpr uint32_t kMaxConcurrentWorkerThreads = 2;
+	static const constexpr uint32_t kMaxExecutionNode = 64;
+	static const constexpr uint32_t kMaxTagsNum = 8;
 	// <<CONFIG
 
-	static const constexpr int kMaxComponentTypeNum = kActuallyImplementedComponents;
+	static const constexpr uint32_t kMaxComponentTypeNum = kActuallyImplementedComponents;
 	static_assert(kActuallyImplementedComponents <= kMaxComponentTypeNum, "too many component types");
+
+	struct Tag
+	{
+		using TagId = uint8_t;
+		constexpr const static uint8_t kNoTagValue = UINT8_MAX;
+	private:
+		TagId id = kNoTagValue;
+
+	public:
+		constexpr Tag() = default;
+		template<typename T> Tag(T v) : id(static_cast<TagId>(v))
+		{
+			assert(static_cast<uint32_t>(v) < kMaxTagsNum);
+			assert(id != kNoTagValue);
+		}
+
+		constexpr static bool Match(const Tag A, const Tag B)
+		{
+			return (A.id == B.id) || (A.id == kNoTagValue) || (B.id == kNoTagValue);
+		}
+
+		constexpr TagId Index() const { return id; }
+		constexpr bool HasValidValue() const
+		{
+			assert((id < kMaxTagsNum) || (id != kNoTagValue));
+			return id != kNoTagValue;
+		}
+	};
 
 	struct EntityId
 	{
 		using TIndex = uint16_t;
 	private:
-		TIndex index = 0xFFFF;
+		constexpr static const TIndex kInvalidValue = UINT16_MAX;
+		TIndex index = kInvalidValue;
 
-		constexpr EntityId(TIndex _idx) : index(_idx)
+		template<typename T>
+		constexpr EntityId(T _idx) 
+			: index(static_cast<EntityId::TIndex>(_idx))
 		{
+			assert(_idx < UINT16_MAX);
 			assert(IsValidForm());
 		}
 
@@ -48,7 +77,7 @@ namespace ECS
 
 		constexpr bool operator < (const EntityId& other) const
 		{
-			return ((index == 0xFFFF) && (other.index != 0xFFFF))
+			return ((index == kInvalidValue) && (other.index != kInvalidValue))
 				|| (index < other.index);
 		}
 
@@ -60,9 +89,11 @@ namespace ECS
 
 	struct EntityHandle
 	{
-	private:
 		using TGeneration = int16_t;
-		TGeneration generation = -1;
+		constexpr static const TGeneration kNoGeneration = UINT16_MAX;
+
+	private:
+		TGeneration generation = kNoGeneration;
 		EntityId id;
 		friend class ECSManager;
 
@@ -71,7 +102,7 @@ namespace ECS
 	public:
 		constexpr EntityHandle() = default;
 
-		constexpr bool IsValidForm() const { return id.IsValidForm() && (generation >= 0); }
+		constexpr bool IsValidForm() const { return id.IsValidForm() && (generation != kNoGeneration); }
 
 		operator EntityId() const { return id; }
 	};
@@ -91,21 +122,21 @@ namespace ECS
 
 	namespace Details
 	{
-		using TCacheIter = unsigned int;
+		using TCacheIter = uint32_t;
 
-		using ComponentCache = Bitset2::bitset2<kMaxComponentTypeNum>;
+		using ComponentIdxSet = Bitset2::bitset2<kMaxComponentTypeNum>;
 
 		template<int T, bool TIsEmpty> struct AnyComponentBase
 		{
-			static const constexpr int kComponentTypeIdx = T; //use  boost::hana::type_c ?
+			static const constexpr uint32_t kComponentTypeIdx = T; //use  boost::hana::type_c ?
 			static_assert(kComponentTypeIdx < kMaxComponentTypeNum, "too many component types");
 			static_assert(kComponentTypeIdx < kActuallyImplementedComponents, "not implemented component");
 
 			static const constexpr bool kIsEmpty = TIsEmpty;
 
-			constexpr static ComponentCache GetComponentCache()
+			constexpr static ComponentIdxSet GetComponentCache()
 			{
-				return ComponentCache{ 1 } << kComponentTypeIdx;
+				return ComponentIdxSet{ 1 } << kComponentTypeIdx;
 			}
 		};
 
@@ -144,7 +175,7 @@ namespace ECS
 		struct FilterBuilder
 		{
 			template<typename TComp>
-			constexpr static ComponentCache BuildSingle()
+			constexpr static ComponentIdxSet BuildSingle()
 			{
 				constexpr bool kIsPointer = std::is_pointer_v<TComp>;
 				constexpr bool kIsConst = std::is_const_v<std::remove_reference_t<std::remove_pointer_t<TComp>>>;
@@ -152,27 +183,30 @@ namespace ECS
 					|| ((TFilerOptions == EComponentFilerOptions::OnlyMutable) && kIsConst)
 					|| ((TFilerOptions == EComponentFilerOptions::OnlyConst) && !kIsConst))
 				{
-					return ComponentCache{};
+					return ComponentIdxSet{};
 				}
-				return RemoveDecorators<TComp>::type::GetComponentCache();
+				else
+				{
+					return RemoveDecorators<TComp>::type::GetComponentCache();
+				}
 			}
 
 			template<typename TCompHead, typename... TCompsTail>
-			constexpr static ComponentCache BuildHelper()
+			constexpr static ComponentIdxSet BuildHelper()
 			{
 				return BuildSingle<TCompHead>() | Build<TCompsTail...>();
 			}
 
 			template<typename... TComps>
-			constexpr static ComponentCache Build()
+			constexpr static ComponentIdxSet Build()
 			{
 				return BuildHelper<TComps...>();
 			}
 
 			template<>
-			constexpr static ComponentCache Build<>()
+			constexpr static ComponentIdxSet Build<>()
 			{
-				return ComponentCache{};
+				return ComponentIdxSet{};
 			}
 		};
 
@@ -185,7 +219,7 @@ namespace ECS
 
 		template<class TComp, int TIndex> struct Unbox<TComp&, TIndex>
 		{
-			template<typename TArr> static TComp& Get(EntityId id, TArr& arr, const ComponentCache&)
+			template<typename TArr> static TComp& Get(EntityId id, TArr& arr, const ComponentIdxSet&)
 			{
 				if constexpr(RemoveDecorators<TComp>::type::Container::kUseCachedIter)
 				{
@@ -195,7 +229,7 @@ namespace ECS
 				return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id);
 			}
 
-			template<typename TArr, typename TKnownComp> static TComp& Get(EntityId id, TArr& arr, const ComponentCache& dummy, TKnownComp& known_comp)
+			template<typename TArr, typename TKnownComp> static TComp& Get(EntityId id, TArr& arr, const ComponentIdxSet& dummy, TKnownComp& known_comp)
 			{
 				if constexpr (std::is_same_v<RemoveDecorators<TComp>::type, TKnownComp>)
 				{
@@ -207,7 +241,7 @@ namespace ECS
 
 		template<class TDecoratedComp, int TIndex> struct Unbox<TDecoratedComp*, TIndex>
 		{
-			template<typename TArr> static TDecoratedComp* Get(EntityId id, TArr& arr, const ComponentCache& component_cache)
+			template<typename TArr> static TDecoratedComp* Get(EntityId id, TArr& arr, const ComponentIdxSet& component_cache)
 			{
 				using TComp = typename RemoveDecorators<TDecoratedComp>::type;
 				if (component_cache.test(TComp::kComponentTypeIdx))
@@ -217,7 +251,7 @@ namespace ECS
 				return nullptr;
 			}
 
-			template<typename TArr, typename TKnownComp> static TDecoratedComp* Get(EntityId id, TArr& arr, const ComponentCache& component_cache, TKnownComp&)
+			template<typename TArr, typename TKnownComp> static TDecoratedComp* Get(EntityId id, TArr& arr, const ComponentIdxSet& component_cache, TKnownComp&)
 			{
 				return Get<TArr>(id, arr, component_cache);
 			}
@@ -263,7 +297,7 @@ namespace ECS
 
 		template<class TComp> struct UnboxSimple<TComp&>
 		{
-			static TComp& Get(EntityId id, const ComponentCache&)
+			static TComp& Get(EntityId id, const ComponentIdxSet&)
 			{
 				return RemoveDecorators<TComp>::type::GetContainer().GetChecked(id);
 			}
@@ -271,7 +305,7 @@ namespace ECS
 
 		template<class TDComp> struct UnboxSimple<TDComp*>
 		{
-			static TDComp* Get(EntityId id, const ComponentCache& entity_components)
+			static TDComp* Get(EntityId id, const ComponentIdxSet& entity_components)
 			{
 				using TComp = typename RemoveDecorators<TDComp>::type;
 				return entity_components.test(TComp::kComponentTypeIdx)
