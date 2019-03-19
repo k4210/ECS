@@ -26,6 +26,16 @@ namespace ECS
 		_Count
 	};
 
+	namespace Details
+	{
+		enum class EStatId
+		{
+			FindTaskToExecute,
+			PushEvent,
+			PopEvent,
+			_Count
+		};
+	}
 #if ECS_STAT_ENABLED
 
 	struct Stat
@@ -65,12 +75,18 @@ namespace ECS
 			std::vector<RecordGroup> groups;
 
 		private:
-			StaticData()
-				:groups(4)
+			StaticData() : groups(4)
 			{
-				AddGroup(1, EPredefinedStatGroups::InnerLibrary, [](uint32_t) -> const char*
+				AddGroup(Details::EStatId::_Count, EPredefinedStatGroups::InnerLibrary, [](uint32_t idx) -> const char*
 				{
-					return "FindTaskToExecute";
+					const Details::EStatId id = static_cast<Details::EStatId>(idx);
+					switch (id)
+					{
+						case Details::EStatId::FindTaskToExecute: return "FindTaskToExecute";
+						case Details::EStatId::PushEvent: return "PushEvent";
+						case Details::EStatId::PopEvent: return "PopEvent";
+					}
+					return "unknown";
 				});
 			}
 		public:

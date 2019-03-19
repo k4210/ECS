@@ -225,7 +225,7 @@ namespace ECS
 		{
 			if (pending_tasks.empty())
 				return {};
-			ScopeDurationLog __sdl(0, EPredefinedStatGroups::InnerLibrary);
+			ScopeDurationLog __sdl(Details::EStatId::FindTaskToExecute, EPredefinedStatGroups::InnerLibrary);
 			
 			auto tasks_conflict = [](const AsyncDetails::Task& a, const AsyncDetails::Task& b) -> bool
 			{

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ECSBase.h"
-
+#include "ECSStat.h"
 #include "concurrentqueue\concurrentqueue.h"
 
 namespace ECS
@@ -54,11 +54,13 @@ namespace ECS
 
 		void Push(EventStorage&& e)
 		{
+			ScopeDurationLog __sdl(Details::EStatId::PushEvent, EPredefinedStatGroups::InnerLibrary);
 			queue.enqueue(e);
 		}
 
 		bool Pop(EventStorage& result)
 		{
+			ScopeDurationLog __sdl(Details::EStatId::PopEvent, EPredefinedStatGroups::InnerLibrary);
 			return queue.try_dequeue(result);
 		}
 	};
