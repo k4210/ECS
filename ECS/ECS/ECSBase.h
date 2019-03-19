@@ -38,17 +38,16 @@ namespace ECS
 			assert(static_cast<uint32_t>(v) < kMaxTagsNum);
 			assert(id != kNoTagValue);
 		}
+		constexpr TagId Index() const { return id; }
 
 		constexpr static bool Match(const Tag A, const Tag B)
 		{
 			return (A.id == B.id) || (A.id == kNoTagValue) || (B.id == kNoTagValue);
 		}
-
-		constexpr TagId Index() const { return id; }
-		constexpr bool HasValidValue() const
+		constexpr static Tag Any() { return Tag{}; }
+		constexpr bool operator!=(const Tag& other)
 		{
-			assert((id < kMaxTagsNum) || (id != kNoTagValue));
-			return id != kNoTagValue;
+			return id != other.id;
 		}
 	};
 
@@ -105,6 +104,29 @@ namespace ECS
 		constexpr bool IsValidForm() const { return id.IsValidForm() && (generation != kNoGeneration); }
 
 		operator EntityId() const { return id; }
+	};
+
+	struct ExecutionNodeId
+	{
+	private:
+		constexpr static const uint16_t kInvalidValue = UINT16_MAX;
+		uint16_t index = kInvalidValue;
+		friend class ECSManagerAsync;
+		friend struct ExecutionNodeIdSet;
+	public:
+		constexpr ExecutionNodeId() = default;
+		constexpr ExecutionNodeId(uint16_t in_idx)
+			: index(in_idx)
+		{
+			assert(IsValid());
+		}
+
+		constexpr uint32_t GetIndex() const { return index; }
+
+		constexpr bool IsValid() const
+		{
+			return (index != kInvalidValue) && (index < kMaxExecutionNode);
+		}
 	};
 
 	template<size_t N, class T>

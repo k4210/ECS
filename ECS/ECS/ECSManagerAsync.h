@@ -38,29 +38,6 @@ namespace ECS
 		}
 	};
 
-	struct ExecutionNodeId
-	{
-	private:
-		constexpr static const uint16_t kInvalidValue = UINT16_MAX;
-		uint16_t index = kInvalidValue;
-		friend class ECSManagerAsync;
-		friend struct ExecutionNodeIdSet;
-	public:
-		constexpr ExecutionNodeId() = default;
-		constexpr ExecutionNodeId(uint16_t in_idx)
-			: index(in_idx)
-		{
-			assert(IsValid());
-		}
-
-		constexpr int GetIndex() const { return index; }
-
-		constexpr bool IsValid() const
-		{
-			return (index != kInvalidValue) && (index < kMaxExecutionNode);
-		}
-	};
-
 	struct ExecutionNodeIdSet
 	{
 		Bitset2::bitset2<kMaxExecutionNode> bits;
@@ -132,7 +109,7 @@ namespace ECS
 			using TFuncPtr = typename std::add_pointer_t<void(EntityId, TDecoratedComps...)>;
 			assert(!!task.per_entity_function);
 			TFuncPtr func = reinterpret_cast<TFuncPtr>(task.per_entity_function);
-			ecs.Call<TFilter>(func, task.filter.tag);
+			ecs.CallBlocking<TFilter>(func, task.filter.tag);
 		}
 		
 		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>
@@ -146,7 +123,7 @@ namespace ECS
 			TFuncPtr_SP func_sp = reinterpret_cast<TFuncPtr_SP>(task.per_entity_function_second_pass);
 
 			assert(task.filter_second_pass.has_value());
-			ecs.CallOverlap<TFilterA, TFilterB, THolder>(func_fp, func_sp
+			ecs.CallOverlapBlocking<TFilterA, TFilterB, THolder>(func_fp, func_sp
 				, task.filter.tag, task.filter_second_pass->tag);
 		}
 	}
@@ -189,12 +166,12 @@ namespace ECS
 
 				if (task.has_value())
 				{
-					LOG("ECS worker %d found '%s'", worker_idx, Str(task->execution_id.GetIndex()));
+					LOG("ECS worker %d found '%s'", worker_idx, Str(task->execution_id));
 					{
-						ScopeDurationLog __sdl(task->execution_id.GetIndex());
+						ScopeDurationLog __sdl(task->execution_id);
 						task->func(owner, *task);
 					}
-					LOG("ECS worker %d done '%s'", worker_idx, Str(task->execution_id.GetIndex()));
+					LOG("ECS worker %d done '%s'", worker_idx, Str(task->execution_id));
 					auto optional_notifier = task->optional_notifier;
 					const bool valid_execution_node = task->execution_id.IsValid();
 					{
@@ -248,7 +225,7 @@ namespace ECS
 		{
 			if (pending_tasks.empty())
 				return {};
-			ScopeDurationLog __sdl(-1);
+			ScopeDurationLog __sdl(0, EPredefinedStatGroups::InnerLibrary);
 			
 			auto tasks_conflict = [](const AsyncDetails::Task& a, const AsyncDetails::Task& b) -> bool
 			{

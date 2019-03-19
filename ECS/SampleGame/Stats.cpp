@@ -1,27 +1,17 @@
 #include "ECS/ECSStat.h"
-#include "GameBase.h"
+#include "ECS/ECSManagerAsync.h"
+#include "Game.h"
 
 #if ECS_STAT_ENABLED
-using namespace ECS;
-
-Stat::TRecords Stat::records(static_cast<int>(EStatId::Count) + 1);
-const Stat::FStatToStr Stat::stat_to_str([](const StatId eid)
+namespace
 {
-	if (eid == EExecutionNode::Graphic_Update.GetIndex()) return "Graphic_Update";
-	if (eid == EExecutionNode::Movement_Update.GetIndex()) return "Movement_Update";
-	if (eid == EExecutionNode::TestOverlap.GetIndex()) return "TestOverlap";
-
-	const EStatId id = static_cast<EStatId>(eid);
-	switch (id)
+	using namespace ECS;
+	static Stat::Register static_stat_register(3, EPredefinedStatGroups::ExecutionNode, [](uint32_t eid)
 	{
-		case EStatId::Graphic_WaitForUpdate: return "Graphic_WaitForUpdate";
-		case EStatId::Graphic_RenderSync: return "Graphic_RenderSync";
-		case EStatId::Graphic_WaitForRenderSync: return "Graphic_WaitForRenderSync";
-		case EStatId::Display: return "Display";
-		case EStatId::GameFrame: return "GameFrame";
-		case EStatId::QuadTreeIteratorConstrucion: return "QuadTreeIteratorConstrucion";
-	}
-	return "unknown";
-});
-
+		if (eid == EExecutionNode::Graphic_Update.GetIndex()) return "Graphic_Update";
+		if (eid == EExecutionNode::Movement_Update.GetIndex()) return "Movement_Update";
+		if (eid == EExecutionNode::TestOverlap.GetIndex()) return "TestOverlap";
+		return "unknown";
+	});
+}
 #endif //ECS_STAT_ENABLED

@@ -19,6 +19,8 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="BaseGame\GameBase.h" />
+    <ClInclude Include="BaseGame\QuadTree.h" />
     <ClInclude Include="ECS\ECSBase.h" />
     <ClInclude Include="ECS\ECSContainer.h" />
     <ClInclude Include="ECS\ECSEvent.h" />
@@ -26,12 +28,12 @@
     <ClInclude Include="ECS\ECSManagerAsync.h" />
     <ClInclude Include="ECS\ECSStat.h" />
     <ClInclude Include="SampleGame\Components.h" />
-    <ClInclude Include="SampleGame\GameBase.h" />
+    <ClInclude Include="SampleGame\Game.h" />
     <ClInclude Include="SampleGame\Systems.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="BaseGame\MainLoop.cpp" />
     <ClCompile Include="SampleGame\Components.cpp" />
-    <ClCompile Include="SampleGame\GameMain.cpp" />
     <ClCompile Include="SampleGame\Stats.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">

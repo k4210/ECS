@@ -4,6 +4,7 @@
 #include <atomic>
 #include <vector>
 #include <assert.h>
+#include "ECSBase.h"
 
 #ifndef NDEBUG // DEBUG
 #define ECS_STAT_ENABLED 1
@@ -14,18 +15,21 @@
 #endif
 
 #undef STAT
-
-#if ECS_STAT_ENABLED
 namespace ECS
 {
-	using StatId = int;
+	enum EPredefinedStatGroups
+	{
+		InnerLibrary = 0,
+		Framework,
+		ExecutionNode,
+		Custom,
+		_Count
+	};
 
-	const char* Str(StatId id);
+#if ECS_STAT_ENABLED
 
 	struct Stat
 	{
-		static const constexpr StatId FindTaskToExecuteId = -1;
-
 		struct Record
 		{
 			std::atomic_int64_t sum = 0;
@@ -48,81 +52,135 @@ namespace ECS
 			}
 		};
 
-		using TRecords = std::vector<Record>;
-		static TRecords records;
+		using FStatToStr = std::add_pointer<const char*(uint32_t)>::type;
 
-		using FStatToStr = std::add_pointer<const char*(StatId)>::type;
-		static const FStatToStr stat_to_str;
+		struct RecordGroup
+		{
+			std::vector<Record> records;
+			FStatToStr stat_to_str = nullptr;
+		};
 
-		static void Add(StatId record_index, std::chrono::microseconds duration_time)
+		struct StaticData
+		{
+			std::vector<RecordGroup> groups;
+
+		private:
+			StaticData()
+				:groups(4)
+			{
+				AddGroup(1, EPredefinedStatGroups::InnerLibrary, [](uint32_t) -> const char*
+				{
+					return "FindTaskToExecute";
+				});
+			}
+		public:
+			static StaticData& Get()
+			{
+				static StaticData local_inst;
+				return local_inst;
+			}
+
+			template<typename RecordIdx, typename GroupIdx>
+			void AddGroup(RecordIdx in_record_num, GroupIdx in_group_idx, const FStatToStr stat_to_str)
+			{
+				const uint32_t group_idx = static_cast<uint32_t>(in_group_idx);
+				if (groups.size() <= group_idx)
+				{
+					groups.resize(group_idx+1);
+				}
+				RecordGroup& group = groups[group_idx];
+				assert(group.records.empty());
+				const uint32_t record_num = static_cast<uint32_t>(in_record_num);
+				assert(record_num > 0);
+				group.records = std::vector<Record>(record_num);
+				assert(!group.stat_to_str);
+				group.stat_to_str = stat_to_str;
+				assert(group.stat_to_str);
+			}
+		};
+
+		static void Add(const uint32_t record_index, const uint32_t group_idx, std::chrono::microseconds duration_time)
 		{
 			const auto microseconds = duration_time.count();
-			const int64_t num_of_inner_stats = 1;
-			const int64_t actual_idx = static_cast<int64_t>(record_index) + num_of_inner_stats;
-			Record& record = records[actual_idx];
+			Record& record = StaticData::Get().groups[group_idx].records[record_index];
 			record.calls++;
 			record.sum += microseconds;
-			if(microseconds > record.max)
+			if (microseconds > record.max)
 				record.max = microseconds;
 		}
 
 		static void Reset()
 		{
-			for (Record& r : records)
+			for (auto& group : StaticData::Get().groups)
 			{
-				r = Record{};
+				for (Record& r : group.records)
+				{
+					r = Record{};
+				}
 			}
 		}
 
 		static void LogAll(int64_t frames)
 		{
 			printf_s("Frame: %lli\n", frames);
-			for (int i = 0; i < records.size(); i++)
+			for (const auto& group : StaticData::Get().groups)
 			{
-				Record& record = records[i]; 
-				if (record.calls > 0)
+				for (int i = 0; i < group.records.size(); i++)
 				{
-					constexpr double to_ms = 1.0/1000.0;
-					printf_s("Stat %2i %-28s avg per call: %7.3f avg per frame: %7.3f max: %7.3f calls per frame: %7.3f\n"
-						, i-1, Str(i-1)
-						, record.sum * to_ms / record.calls
-						, record.sum * to_ms / frames
-						, record.max * to_ms
-						, double(record.calls) / frames);
+					const Record& record = group.records[i];
+					if (record.calls > 0)
+					{
+						constexpr double to_ms = 1.0 / 1000.0;
+						const char* name = group.stat_to_str ? group.stat_to_str(i) : nullptr;
+						printf_s("Stat %-28s avg per call: %7.3f avg per frame: %7.3f max: %7.3f calls per frame: %7.3f\n"
+							, (name ? name : "unknown")
+							, record.sum * to_ms / record.calls
+							, record.sum * to_ms / frames
+							, record.max * to_ms
+							, double(record.calls) / frames);
+					}
 				}
 			}
 		}
+
+		struct Register
+		{
+			template<typename RecordIdx, typename GroupIdx>
+			Register(RecordIdx record_num, GroupIdx grup_idx, const FStatToStr stat_to_str)
+			{
+				StaticData::Get().AddGroup(record_num, grup_idx, stat_to_str);
+			}
+		};
 	};
 
-	inline const char* Str(StatId id)
+	inline const char* Str(ExecutionNodeId id)
 	{
-		if (id == Stat::FindTaskToExecuteId)
-		{
-			return "FindTaskToExecute";
-		}
-		assert(Stat::stat_to_str);
-		return Stat::stat_to_str(id);
+		auto& group = Stat::StaticData::Get().groups[static_cast<int>(EPredefinedStatGroups::ExecutionNode)];
+		assert(group.stat_to_str);
+		return group.stat_to_str ? group.stat_to_str(id.GetIndex()) : "unknown";
 	}
 
 	struct ScopeDurationLog
 	{
 	private:
-		std::chrono::time_point<std::chrono::high_resolution_clock> start;
-		StatId id;
+		const std::chrono::time_point<std::chrono::high_resolution_clock> start;
+		const uint32_t group_idx;
+		const uint32_t record_index;
 	public:
-		ScopeDurationLog(StatId in_id)
+		ScopeDurationLog(ExecutionNodeId in_id)
 			: start(std::chrono::high_resolution_clock::now())
-			, id(in_id) {}
+			, group_idx(static_cast<int>(EPredefinedStatGroups::ExecutionNode)), record_index(in_id.GetIndex()) {}
 
-		template<typename T>
-		ScopeDurationLog(T in_id)
+		template<typename RecordIdx, typename GroupIdx>
+		ScopeDurationLog(RecordIdx in_record_num, GroupIdx in_group_idx)
 			: start(std::chrono::high_resolution_clock::now())
-			, id(static_cast<int>(in_id)) {}
+			, group_idx(static_cast<int>(in_group_idx))
+			, record_index(static_cast<int>(in_record_num)) {}
 
 		~ScopeDurationLog()
 		{
 			const auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start);
-			Stat::Add(id, duration_us);
+			Stat::Add(record_index, group_idx, duration_us);
 		}
 	};
 
@@ -143,20 +201,15 @@ namespace ECS
 		}
 	}
 #endif
-}
 
 #else // ECS_STAT_ENABLED
-namespace ECS
-{
-	using StatId = int;
-
 	struct ScopeDurationLog
 	{
 		template<typename T> ScopeDurationLog(T) {}
+		template<typename T1, typename T2> ScopeDurationLog(T1, T2) {}
 	};
-}
 #endif // ECS_STAT_ENABLED
-
+}
 #undef LOG
 
 #if ECS_LOG_ENABLED

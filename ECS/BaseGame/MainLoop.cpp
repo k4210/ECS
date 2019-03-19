@@ -1,60 +1,39 @@
 
-#include "Systems.h"
+#include "GameBase.h"
 
 using namespace ECS;
 
-GResource* GResource::inst = nullptr;
+BaseGameInstance* BaseGameInstance::inst = nullptr;
 
 void RenderLoop()
 {
-	auto& inst = *GResource::inst;
+	auto& inst = *BaseGameInstance::inst;
 	inst.window.setActive(true);
 
 	while (!inst.close_request)
 	{
 		inst.window.clear();
 		{
-			ScopeDurationLog __sdl(EStatId::Graphic_WaitForUpdate);
+			ScopeDurationLog __sdl(EStatId::Graphic_WaitForUpdate, EPredefinedStatGroups::Framework);
 			inst.wait_for_graphic_update.WaitEnterClose();
 		}
 
 		{
-			ScopeDurationLog __sdl(EStatId::Graphic_RenderSync);
-			inst.ecs.Call(&GraphicSystem_RenderSync);
+			ScopeDurationLog __sdl(EStatId::Graphic_RenderSync, EPredefinedStatGroups::Framework);
+			inst.Render();
 			inst.wait_for_render_sync.Open();
 		}
 
 		{
-			ScopeDurationLog __sdl(EStatId::Display);
+			ScopeDurationLog __sdl(EStatId::Display, EPredefinedStatGroups::Framework);
 			inst.window.display();
-		}
-	}
-}
-
-void InitializeGame()
-{
-	auto& inst = *GResource::inst;
-	const float pi = acosf(-1);
-	for (int j = 0; j < 20; j++)
-	{
-		for (int i = 0; i < 20; i++)
-		{
-			const auto e = inst.ecs.AddEntity();
-			inst.ecs.AddComponent<Position>(e).pos = sf::Vector2f(i * 800 / 20.0f, j * 600 / 20.0f);
-			inst.ecs.AddComponent<CircleSize>(e).radius = 10;
-			inst.ecs.AddComponent<Sprite2D>(e).shape.setFillColor(sf::Color::Green);
-			const float angle = pi * 2.0f * (i + 1) / 22.0f;
-			inst.ecs.AddComponent<Velocity>(e).velocity = sf::Vector2f(sinf(angle), cosf(angle));
-			inst.ecs.AddComponent<Animation>(e);
-
-			inst.quad_tree.Add(e, ToRegion(inst.ecs.GetComponent<Position>(e), inst.ecs.GetComponent<CircleSize>(e)));
 		}
 	}
 }
 
 void HandleSystemEvents()
 {
-	auto& inst = *GResource::inst;
+	auto& inst = *BaseGameInstance::inst;
 	sf::Event event;
 	while (inst.window.pollEvent(event))
 	{
@@ -70,9 +49,9 @@ void HandleSystemEvents()
 
 void MainLoopBody()
 {
-	ScopeDurationLog __sdl(EStatId::GameFrame);
+	ScopeDurationLog __sdl(EStatId::GameFrame, EPredefinedStatGroups::Framework);
 	const auto frame_start = std::chrono::system_clock::now();
-	auto& inst = *GResource::inst;
+	auto& inst = *BaseGameInstance::inst;
 
 	HandleSystemEvents();
 	if(inst.close_request) 
@@ -80,14 +59,11 @@ void MainLoopBody()
 
 	{
 		ECS::DebugLockScope __dls(inst.ecs);
-		inst.ecs.CallAsync(&GraphicSystem_Update, ECS::Tag{}, EExecutionNode::Graphic_Update, ExecutionNodeIdSet{}, &inst.wait_for_graphic_update);
-		inst.ecs.CallAsyncOverlap(&TestOverlap_FirstPass, &TestOverlap_SecondPass, ECS::Tag{}, ECS::Tag{}, EExecutionNode::TestOverlap);
-		inst.ecs.CallAsync(&GameMovement_Update, ECS::Tag{}, EExecutionNode::Movement_Update, EExecutionNode::TestOverlap);
-
+		inst.DispatchTasks();
 		inst.ecs.WorkFromMainThread(false);
 
 		{
-			ScopeDurationLog __sdl(EStatId::Graphic_WaitForRenderSync);
+			ScopeDurationLog __sdl(EStatId::Graphic_WaitForRenderSync, EPredefinedStatGroups::Framework);
 			inst.wait_for_render_sync.WaitEnterClose();
 		}
 
@@ -100,7 +76,7 @@ void MainLoopBody()
 
 	{
 		EventStorage storage;
-		while (GResource::inst->event_manager.Pop(storage))
+		while (BaseGameInstance::inst->event_manager.Pop(storage))
 		{
 			IEvent* e = storage.Get();
 			assert(e);
@@ -119,11 +95,11 @@ void MainLoopBody()
 
 int main()
 {
-	GResource::inst = new GResource();
+	BaseGameInstance::inst = BaseGameInstance::CreateGameInstance();
 	{
-		auto& inst = *GResource::inst;
+		auto& inst = *BaseGameInstance::inst;
 
-		InitializeGame();
+		inst.InitializeGame();
 		inst.ecs.StartThreads();
 		{
 			inst.window.create(sf::VideoMode(800, 600), "HnS");
@@ -134,7 +110,7 @@ int main()
 			MainLoopBody(); //Remove first stat pass
 			ECS::Stat::Reset();
 #endif
-			while (!GResource::inst->close_request)
+			while (!BaseGameInstance::inst->close_request)
 			{
 				MainLoopBody();
 			}
@@ -151,9 +127,29 @@ int main()
 		inst.ecs.Reset();
 	}
 
-	delete GResource::inst;
-	GResource::inst = nullptr;
+	delete BaseGameInstance::inst;
+	BaseGameInstance::inst = nullptr;
 
 	getchar();
 	return 0;
 }
+
+#if ECS_STAT_ENABLED
+namespace 
+{
+	static Stat::Register static_stat_register(EStatId::_Count, EPredefinedStatGroups::Framework, [](uint32_t eid)
+	{
+		const EStatId id = static_cast<EStatId>(eid);
+		switch (id)
+		{
+			case EStatId::Graphic_WaitForUpdate: return "Graphic_WaitForUpdate";
+			case EStatId::Graphic_RenderSync: return "Graphic_RenderSync";
+			case EStatId::Graphic_WaitForRenderSync: return "Graphic_WaitForRenderSync";
+			case EStatId::Display: return "Display";
+			case EStatId::GameFrame: return "GameFrame";
+			case EStatId::QuadTreeIteratorConstrucion: return "QuadTreeIteratorConstrucion";
+		}
+		return "unknown";
+	});
+}
+#endif //ECS_STAT_ENABLED

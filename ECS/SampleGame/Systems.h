@@ -1,16 +1,17 @@
 #pragma once
 #include <SFML/Graphics.hpp>
 #include "Components.h"
-#include "GameBase.h"
+#include "BaseGame/GameBase.h"
 
-static QuadTree::Region ToRegion(const Position& pos, const CircleSize& size)
+static QuadTree<ECS::EntityId>::Region ToRegion(const Position& pos, const CircleSize& size)
 {
+	const uint32_t kQuadPixelSize = 32;
 	const float position_offset = 64;
-	return QuadTree::Region{
-		static_cast<uint8_t>((position_offset + pos.pos.x - size.radius) / QuadTree::kQuadPixelSize),
-		static_cast<uint8_t>((position_offset + pos.pos.y - size.radius) / QuadTree::kQuadPixelSize),
-		static_cast<uint8_t>(1 + ((position_offset + pos.pos.x + size.radius) / QuadTree::kQuadPixelSize)),
-		static_cast<uint8_t>(1 + ((position_offset + pos.pos.y + size.radius) / QuadTree::kQuadPixelSize)) };
+	return QuadTree<ECS::EntityId>::Region{
+		static_cast<uint8_t>((position_offset + pos.pos.x - size.radius) / kQuadPixelSize),
+		static_cast<uint8_t>((position_offset + pos.pos.y - size.radius) / kQuadPixelSize),
+		static_cast<uint8_t>(1 + ((position_offset + pos.pos.x + size.radius) / kQuadPixelSize)),
+		static_cast<uint8_t>(1 + ((position_offset + pos.pos.y + size.radius) / kQuadPixelSize)) };
 }
 
 void GraphicSystem_Update(ECS::EntityId
@@ -27,7 +28,7 @@ void GraphicSystem_Update(ECS::EntityId
 
 void GraphicSystem_RenderSync(ECS::EntityId, const Sprite2D& sprite)
 {
-	GResource::inst->window.draw(sprite.shape);
+	BaseGameInstance::inst->window.draw(sprite.shape);
 }
 
 class OutOfBoardEvent : public ECS::IEvent
@@ -36,10 +37,10 @@ class OutOfBoardEvent : public ECS::IEvent
 public:
 	void Execute()
 	{
-		auto& ecs = GResource::inst->ecs;
-		QuadTree::Region region = ToRegion(ecs.GetComponent<Position>(entity), ecs.GetComponent<CircleSize>(entity));
-		GResource::inst->quad_tree.Remove(entity, region);
-		GResource::inst->ecs.RemoveEntity(entity);
+		auto& ecs = BaseGameInstance::inst->ecs;
+		QuadTree<ECS::EntityId>::Region region = ToRegion(ecs.GetComponent<Position>(entity), ecs.GetComponent<CircleSize>(entity));
+		BaseGameInstance::inst->quad_tree.Remove(entity, region);
+		BaseGameInstance::inst->ecs.RemoveEntity(entity);
 	}
 	OutOfBoardEvent(ECS::EntityHandle eh) : entity(eh) {}
 };
@@ -63,10 +64,10 @@ void GameMovement_Update(ECS::EntityId id
 	}
 	
 	{
-		auto& qt = GResource::inst->quad_tree;
+		auto& qt = BaseGameInstance::inst->quad_tree;
 		qt.Remove(id, ToRegion(pos, size));
 		const float scale_speed = 200.0f;
-		pos.pos += vel.velocity * scale_speed * GResource::inst->frame_time_seconds;
+		pos.pos += vel.velocity * scale_speed * BaseGameInstance::inst->frame_time_seconds;
 		qt.Add(id, ToRegion(pos, size));
 	}
 }
@@ -78,11 +79,11 @@ struct TestOverlap_Holder
 	const CircleSize& size; 
 	Velocity& vel;
 
-	QuadTree::Region region;
-	QuadTree::Iter GetIter(std::vector<uint8_t>& in_memory) const
+	QuadTree<ECS::EntityId>::Region region;
+	QuadTree<ECS::EntityId>::Iter GetIter(std::vector<uint8_t>& in_memory) const
 	{
 		assert(region.IsValid());
-		return QuadTree::Iter(id, region, GResource::inst->quad_tree, in_memory);
+		return QuadTree<ECS::EntityId>::Iter(id, region, BaseGameInstance::inst->quad_tree, in_memory);
 	}
 };
 

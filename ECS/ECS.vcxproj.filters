@@ -5,8 +5,11 @@
       <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
       <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
     </Filter>
-    <Filter Include="Game">
+    <Filter Include="SampleGame">
       <UniqueIdentifier>{b622b802-8215-4f78-871e-cbc6f38e1f42}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="BaseGame">
+      <UniqueIdentifier>{dbd8dd5a-65e3-4db5-8d84-80533fa8b206}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -29,24 +32,30 @@
       <Filter>ECS</Filter>
     </ClInclude>
     <ClInclude Include="SampleGame\Components.h">
-      <Filter>Game</Filter>
-    </ClInclude>
-    <ClInclude Include="SampleGame\GameBase.h">
-      <Filter>Game</Filter>
+      <Filter>SampleGame</Filter>
     </ClInclude>
     <ClInclude Include="SampleGame\Systems.h">
-      <Filter>Game</Filter>
+      <Filter>SampleGame</Filter>
+    </ClInclude>
+    <ClInclude Include="BaseGame\GameBase.h">
+      <Filter>BaseGame</Filter>
+    </ClInclude>
+    <ClInclude Include="BaseGame\QuadTree.h">
+      <Filter>BaseGame</Filter>
+    </ClInclude>
+    <ClInclude Include="SampleGame\Game.h">
+      <Filter>SampleGame</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="SampleGame\Components.cpp">
-      <Filter>Game</Filter>
-    </ClCompile>
-    <ClCompile Include="SampleGame\GameMain.cpp">
-      <Filter>Game</Filter>
+      <Filter>SampleGame</Filter>
     </ClCompile>
     <ClCompile Include="SampleGame\Stats.cpp">
-      <Filter>Game</Filter>
+      <Filter>SampleGame</Filter>
+    </ClCompile>
+    <ClCompile Include="BaseGame\MainLoop.cpp">
+      <Filter>BaseGame</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

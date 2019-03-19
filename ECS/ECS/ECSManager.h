@@ -215,7 +215,7 @@ namespace ECS
 			void Add(Tag t, EntityId id)
 			{
 				assert(id.IsValidForm());
-				if (t.HasValidValue())
+				if (t != Tag::Any())
 				{
 					auto& v = entity_per_tag[t.Index()];
 					auto it_found = std::lower_bound(v.begin(), v.end(), id);
@@ -228,7 +228,7 @@ namespace ECS
 
 			void Remove(Tag t, EntityId id)
 			{
-				if (t.HasValidValue())
+				if (t != Tag::Any())
 				{
 					auto& v = entity_per_tag[t.Index()];
 					auto it_found = std::lower_bound(v.begin(), v.end(), id);
@@ -241,7 +241,7 @@ namespace ECS
 
 			const std::vector<EntityId>& Get(Tag tag) const
 			{
-				assert(tag.HasValidValue());
+				assert(tag != Tag::Any());
 				return entity_per_tag[tag.Index()];
 			}
 		};
@@ -354,7 +354,7 @@ namespace ECS
 		}
 		
 		template<typename TFilter = typename Filter<>, typename... TDecoratedComps>
-		void Call(void(*func)(EntityId, TDecoratedComps...), Tag tag = {})
+		void CallBlocking(void(*func)(EntityId, TDecoratedComps...), Tag tag)
 		{
 			assert(debug_lock);
 			using namespace Details;
@@ -366,7 +366,7 @@ namespace ECS
 			std::array<TCacheIter, kArrSize> cached_iters = { 0 };
 			constexpr ComponentIdxSet kFilter = TFilter::GetComponents() | FilterBuilder<true, EComponentFilerOptions::BothMutableAndConst>::Build<TDecoratedComps...>();
 
-			if (tag.HasValidValue())
+			if (tag != Tag::Any())
 			{
 				const auto& v = tags.Get(tag);
 				for (EntityId id : v)
@@ -404,7 +404,7 @@ namespace ECS
 		}
 
 		template<typename TFilterA = typename Filter<>, typename TFilterB = typename Filter<>, typename THolder, typename... TDComps1, typename... TDComps2>
-		void CallOverlap(THolder(*first_pass)(EntityId, TDComps1...), void(*second_pass)(THolder&, EntityId, TDComps2...), Tag tag_a = {}, Tag tag_b = {})
+		void CallOverlapBlocking(THolder(*first_pass)(EntityId, TDComps1...), void(*second_pass)(THolder&, EntityId, TDComps2...), Tag tag_a, Tag tag_b)
 		{
 			std::vector<uint8_t> memory(512, 0); 
 
